@@ -38,16 +38,16 @@ Plan of Attack & Schedule:
 By the milestone date, I plan to compare and contrast the performance (and correctness) of RCU against other concurrency control algorithms (locks, semaphores, atomics) across various problem types such as global increments (bumps), large data structure access, many-readers-few-writers, many-writers-few-readers, and other configurations. Ideally I can get userspace RCU working on both Linux and MacOS so I can compare the OS-system-call performance as well (since it could be a factor in the RCU performance)
 
 ## Literature Search:
-Restartable sequences: https://www.efficios.com/blog/2019/02/08/linux-restartable-sequences/ 
-What is RCU? https://www.kernel.org/doc/html/latest/RCU/whatisRCU.html
-Also documentation for other concurrency algorithm implementations in C++
+- Restartable sequences: https://www.efficios.com/blog/2019/02/08/linux-restartable-sequences/ 
+- What is RCU? https://www.kernel.org/doc/html/latest/RCU/whatisRCU.html
+- Also documentation for other concurrency algorithm implementations in C++
 
 ## Resources Needed:
-My laptops should be sufficient to perform these experiments. 
-Namely a modern arm64 (M1) and x86 (Intel) machine. 
-RCU on MacOS userspace: https://formulae.brew.sh/formula/userspace-rcu
-RCU on Linux userspace: https://github.com/compudj/librseq
-RCU on Userspace: https://liburcu.org/ 
+- My laptops should be sufficient to perform these experiments. 
+- Namely a modern arm64 (M1) and x86 (Intel) machine. 
+- RCU on MacOS userspace: https://formulae.brew.sh/formula/userspace-rcu
+- RCU on Linux userspace: https://github.com/compudj/librseq
+- RCU on Userspace: https://liburcu.org/ 
 
 ## Getting Started:
 Haven’t done anything for this yet. Will need to begin researching if I can actually install a userspace RCU library on MacOS since traditionally this has been a Linux-kernel-specific technology.
