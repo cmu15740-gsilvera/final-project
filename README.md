@@ -52,3 +52,20 @@ By the milestone date, I plan to compare and contrast the performance (and corre
 
 ## Getting Started:
 Haven’t done anything for this yet. Will need to begin researching if I can actually install a userspace RCU library on MacOS since traditionally this has been a Linux-kernel-specific technology.
+
+
+## Installing `userspace-rcu`
+Using git submodule of [`userspace-rcu`](userspace-rcu) you can do the following:
+
+```bash
+cd userspace-rcu/
+./bootstrap
+./configure
+make -j10
+sudo make install
+```
+
+Note that userspace-rcu is installed (On MacOS) if you can see the following files in `/usr/local/include/`
+```
+urcu urcu-bp.h urcu-call-rcu.h urcu-defer.h urcu-flavor.h urcu-pointer.h urcu-qsbr.h urcu.h
+```
