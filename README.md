@@ -41,6 +41,7 @@ By the milestone date, I plan to compare and contrast the performance (and corre
 - Restartable sequences: https://www.efficios.com/blog/2019/02/08/linux-restartable-sequences/ 
 - What is RCU? https://www.kernel.org/doc/html/latest/RCU/whatisRCU.html
 - Also documentation for other concurrency algorithm implementations in C++
+- https://martong.github.io/high-level-cpp-rcu_informatics_2017.pdf 
 
 ## Resources Needed:
 - My laptops should be sufficient to perform these experiments. 
