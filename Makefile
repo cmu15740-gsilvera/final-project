@@ -1,7 +1,7 @@
 
 CXX=clang++
 CXXFLAGS = -O2 -std=c++14 -Wall -Wextra -Wno-unused-parameter
-RCU=-lurcu-memb
+LINKER=-lurcu-memb -pthread
 
-critical:
-	$(CXX) $(CXXFLAGS) -o critical critical.cpp $(RCU)
+critical: critical.cpp
+	$(CXX) $(CXXFLAGS) -o critical critical.cpp $(LINKER)
