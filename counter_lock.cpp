@@ -1,6 +1,6 @@
 #include <chrono>   // std::chrono
 #include <iostream> // std::cout
-#include <thread>   // std::thread
+#include <thread>   // std::thread, std::mutex
 #include <vector>   // std::vector
 
 // userspace-RCU include
@@ -15,14 +15,18 @@ int write_frequency_ns = 10;
 volatile size_t gbl_counter = 0; // this is the global!
 volatile bool running = true;
 
+std::mutex m;
+
 void bump_counter()
 {
+    std::lock_guard<std::mutex> lock(m);
     gbl_counter++;
     // std::cout << "bump!" << std::endl;
 }
 
 void read_counter(volatile size_t &var)
 {
+    std::lock_guard<std::mutex> lock(m);
     var = gbl_counter;
 }
 
