@@ -1,9 +1,7 @@
-#include <algorithm>
-#include <future>
-#include <iostream>
-#include <thread>
-#include <unordered_map>
-#include <vector>
+#include <chrono>   // std::chrono
+#include <iostream> // std::cout
+#include <thread>   // std::thread
+#include <vector>   // std::vector
 
 // userspace-RCU include
 #define _LGPL_SOURCE 1
@@ -12,20 +10,18 @@
 constexpr size_t num_readers = 10;
 // constexpr int num_writers = 1;
 
-float runtime = 1.f;         // second of total runtime
-int write_frequency_ms = 10; // /1000 to get seconds
+int write_frequency_ns = 10;
 
-// this is the global!
-size_t gbl_counter = 0;
-bool running = true;
-std::mutex m;
+volatile size_t gbl_counter = 0; // this is the global!
+volatile bool running = true;
 
 void bump_counter()
 {
     gbl_counter++;
+    // std::cout << "bump!" << std::endl;
 }
 
-void read_counter(size_t &var)
+void read_counter(volatile size_t &var)
 {
     var = gbl_counter;
 }
@@ -38,8 +34,9 @@ struct ThreadData
     }
     class std::thread thread;
     size_t id = 0;
-    size_t counter = 0;
+    volatile size_t counter = 0;
     size_t ticks = 0;
+    float runtime = 0.f;
 };
 std::vector<ThreadData> thread_data;
 
@@ -47,29 +44,24 @@ void write_behavior()
 {
     while (running)
     {
-        std::this_thread::sleep_for(std::chrono::milliseconds(write_frequency_ms));
+        std::this_thread::sleep_for(std::chrono::nanoseconds(write_frequency_ns));
         bump_counter();
     }
 }
 
 void read_behavior(size_t id)
 {
-    while (true)
+    auto start = std::chrono::high_resolution_clock::now();
+    while (thread_data[id].ticks < 100 * 1000 * 1000)
     {
         thread_data[id].ticks++;
-        if (thread_data[id].id != id)
-        {
-            std::cout << "FAIL: " << thread_data[id].id << "!=" << id << std::endl;
-        }
         // read global counter
         read_counter(thread_data[id].counter);
-        if (thread_data[id].counter >= runtime * (1000 / write_frequency_ms))
-        {
-            // std::lock_guard<std::mutex> lock(m);
-            // std::cout << "thread " << id << " finished!" << std::endl;
-            break;
-        }
     }
+    auto finish = std::chrono::high_resolution_clock::now();
+    auto ms_count = std::chrono::duration_cast<std::chrono::nanoseconds>(finish - start).count();
+    float runtime_sec = ms_count / 1e9; // ns to s
+    thread_data[id].runtime = runtime_sec;
 }
 
 int main()
@@ -95,8 +87,11 @@ int main()
     // print final values
     for (size_t id = 0; id < num_readers; id++)
     {
-        std::cout << "thread " << id << ": " << thread_data[id].ticks << std::endl;
+        auto &td = thread_data[id];
+        std::cout << "thread " << id << ": " << td.ticks << " -- " << td.runtime << "s -- " << td.counter << std::endl;
     }
+    // final counter should be >= any of the threads' local counters in race mode
+    std::cout << "Final counter: " << gbl_counter << std::endl;
 
     return 0;
 }
