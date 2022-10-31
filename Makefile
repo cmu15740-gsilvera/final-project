@@ -1,6 +1,7 @@
 
 CXX=clang++
-CXXFLAGS = -O2 -std=c++14 -Wall -Wextra -Wno-unused-parameter
+CC=clang
+CXXFLAGS = -std=c++14 -Wall -Wextra -Wno-unused-parameter
 LINKER=-lurcu-memb -pthread
 
 default: all
@@ -17,4 +18,4 @@ counter_atomic: counter_atomic.cpp
 	$(CXX) $(CXXFLAGS) -o counter_atomic.out counter_atomic.cpp $(LINKER)
 
 counter_rcu: counter_rcu.cpp
-	$(CXX) $(CXXFLAGS) -o counter_rcu.out counter_rcu.cpp $(LINKER)
+	$(CC) $(CXXFLAGS) -o counter_rcu.out counter_rcu.cpp $(LINKER)
