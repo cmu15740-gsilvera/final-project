@@ -5,7 +5,7 @@ LINKER=-lurcu-memb -pthread
 
 default: all
 
-all: counter_race counter_lock counter_atomic
+all: counter_race counter_lock counter_atomic counter_rcu
 
 counter_race: counter_race.cpp
 	$(CXX) $(CXXFLAGS) -o counter_race.out counter_race.cpp $(LINKER)
@@ -15,3 +15,6 @@ counter_lock: counter_lock.cpp
 
 counter_atomic: counter_atomic.cpp
 	$(CXX) $(CXXFLAGS) -o counter_atomic.out counter_atomic.cpp $(LINKER)
+
+counter_rcu: counter_rcu.cpp
+	$(CXX) $(CXXFLAGS) -o counter_rcu.out counter_rcu.cpp $(LINKER)
