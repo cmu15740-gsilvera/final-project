@@ -1,13 +1,13 @@
+#include <iostream>  // cout
 #include <pthread.h> // pthread, mutex
-#include <stdbool.h> // bool
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h> // timeval
+#include <vector> // std::vector
 
 // userspace-RCU include
 #define _LGPL_SOURCE 1
-#include <urcu/map/urcu-memb.h> // rcu_init
-#include <urcu/urcu-memb.h>     // This is the preferred version of the library
+#include <urcu/urcu-memb.h> // This is the preferred version of the library
 
 const size_t num_readers = 10;
 // constexpr int num_writers = 1;
@@ -17,7 +17,6 @@ int write_frequency_ns = 10;
 volatile size_t *gbl_counter = NULL; // this is the global!
 volatile bool running = true;
 pthread_mutex_t write_mut;
-rcu_flavor_struct rcu;
 
 uint64_t get_current_time_us()
 {
@@ -59,7 +58,7 @@ struct ThreadData
     float runtime_s = 0.f;
 };
 
-ThreadData *thread_data = NULL;
+std::vector<ThreadData> thread_data;
 
 void *write_behavior(void *args)
 {
@@ -103,8 +102,7 @@ void *read_behavior(void *args)
 
 int main()
 {
-    gbl_counter = (volatile size_t *)malloc(sizeof(size_t));
-    (*gbl_counter) = 0;
+    gbl_counter = new volatile size_t(0);
     srand(0);
     // seed randomness
     urcu_memb_init(); // rcu_init();
@@ -114,18 +112,18 @@ int main()
     pthread_t writer;
     if (pthread_create(&writer, NULL, write_behavior, NULL) != 0)
     {
-        printf("Unable to create new writer thread\n");
+        std::cout << "Unable to create new writer thread" << std::endl;
         exit(1);
     }
-    thread_data = (ThreadData *)malloc(sizeof(ThreadData) * num_readers);
-
+    // allocate thread elements
+    thread_data.reserve(num_readers);
     for (size_t i = 0; i < num_readers; i++)
     {
         size_t *args = (size_t *)malloc(sizeof(size_t) * 1);
         (*args) = i;
         if (pthread_create(&(thread_data[i].thread), NULL, read_behavior, (void *)args) != 0)
         {
-            printf("Unable to create new thread (%zu)\n", i);
+            std::cout << "Unable to create new thread (" << i << ")" << std::endl;
             exit(1);
         }
     }
@@ -144,13 +142,13 @@ int main()
     for (size_t id = 0; id < num_readers; id++)
     {
         auto &td = thread_data[id];
-        printf("thread %zu: %zu -- %.3fs -- %zu\n", id, td.ticks, td.runtime_s, td.counter);
+        std::cout << "thread " << id << ": " << td.ticks << " -- " << td.runtime_s << "s -- " << td.counter
+                  << std::endl;
     }
     // final counter should be >= any of the threads' local counters in race mode
 
-    printf("Final counter: %zu\n", *gbl_counter);
-    free((void *)gbl_counter); // causes segfault??
-    free((void *)thread_data);
+    std::cout << "Final counter: " << *gbl_counter << std::endl;
+    delete gbl_counter;
     pthread_mutex_destroy(&write_mut);
 
     return 0;

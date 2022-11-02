@@ -18,4 +18,4 @@ counter_atomic: counter_atomic.cpp
 	$(CXX) $(CXXFLAGS) -o counter_atomic.out counter_atomic.cpp $(LINKER)
 
 counter_rcu: counter_rcu.cpp
-	$(CC) $(CXXFLAGS) -o counter_rcu.out counter_rcu.cpp $(LINKER)
+	$(CXX) $(CXXFLAGS) -o counter_rcu.out counter_rcu.cpp $(LINKER)
