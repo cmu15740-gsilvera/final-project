@@ -7,14 +7,26 @@
 
 // userspace-RCU include
 #define _LGPL_SOURCE 1
+#if !defined(_LGPL_SOURCE)
+// https://gist.github.com/azat/066d165154fa1efe6000fac59062cc25
+#error URCU is very slow w/o _LGPL_SOURCE
+#endif
 #include <urcu/urcu-memb.h> // This is the preferred version of the library
+// #include <urcu/uatomic.h>
 
 const size_t num_readers = 10;
 // constexpr int num_writers = 1;
 
 int write_frequency_ns = 10;
 
-volatile size_t *gbl_counter = NULL; // this is the global!
+#if defined(_LGBL_SOURCE)
+typedef volatile size_t counter_t;
+#else
+// no volatile for non-_LGPL_SOURCE
+typedef size_t counter_t;
+#endif
+
+counter_t *gbl_counter = NULL; // this is the global!
 volatile bool running = true;
 pthread_mutex_t write_mut;
 
@@ -28,11 +40,15 @@ uint64_t get_current_time_us()
 void bump_counter()
 {
     // similar to https://www.kernel.org/doc/html/latest/RCU/whatisRCU.html#what-are-some-example-uses-of-core-rcu-api
-    volatile size_t *new_counter;
-    volatile size_t *old_counter;
-    new_counter = (volatile size_t *)malloc(sizeof(volatile size_t));
+    counter_t *new_counter;
+    counter_t *old_counter;
+    new_counter = (counter_t *)malloc(sizeof(counter_t));
     pthread_mutex_lock(&write_mut);
+#if defined(_LGPL_SOURCE)
     old_counter = rcu_dereference(gbl_counter);
+#else
+    old_counter = (counter_t *)rcu_dereference((void *)gbl_counter);
+#endif
     *new_counter = (*old_counter + 1); // bump
     rcu_assign_pointer(gbl_counter, new_counter);
     pthread_mutex_unlock(&write_mut);
@@ -41,10 +57,14 @@ void bump_counter()
     // (*gbl_counter)++;
 }
 
-void read_counter(volatile size_t &var)
+void read_counter(counter_t &var)
 {
     urcu_memb_read_lock();
+#if defined(_LGPL_SOURCE)
     var = *rcu_dereference(gbl_counter);
+#else
+    var = *(counter_t *)rcu_dereference((void *)gbl_counter);
+#endif
     urcu_memb_read_unlock();
     // var = *gbl_counter;
 }
@@ -53,7 +73,7 @@ struct ThreadData
 {
     pthread_t thread;
     size_t id = 0;
-    volatile size_t counter = 0;
+    counter_t counter = 0;
     size_t ticks = 0;
     float runtime_s = 0.f;
 };
@@ -102,7 +122,7 @@ void *read_behavior(void *args)
 
 int main()
 {
-    gbl_counter = new volatile size_t(0);
+    gbl_counter = new counter_t(0);
     srand(0);
     // seed randomness
     urcu_memb_init(); // rcu_init();
