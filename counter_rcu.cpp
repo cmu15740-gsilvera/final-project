@@ -1,9 +1,7 @@
 #include <iostream>  // cout
 #include <pthread.h> // pthread, mutex
-#include <stdio.h>
-#include <stdlib.h>
-#include <time.h> // timeval
-#include <vector> // std::vector
+#include <time.h>    // timeval
+#include <vector>    // std::vector
 
 // userspace-RCU include
 #define _LGPL_SOURCE 1
@@ -42,7 +40,7 @@ void bump_counter()
     // similar to https://www.kernel.org/doc/html/latest/RCU/whatisRCU.html#what-are-some-example-uses-of-core-rcu-api
     counter_t *new_counter;
     counter_t *old_counter;
-    new_counter = (counter_t *)malloc(sizeof(counter_t));
+    new_counter = new counter_t(0);
     pthread_mutex_lock(&write_mut);
 #if defined(_LGPL_SOURCE)
     old_counter = rcu_dereference(gbl_counter);
@@ -53,7 +51,7 @@ void bump_counter()
     rcu_assign_pointer(gbl_counter, new_counter);
     pthread_mutex_unlock(&write_mut);
     urcu_memb_synchronize_rcu(); // synchronize_rcu();
-    free((void *)old_counter);
+    delete old_counter;
     // (*gbl_counter)++;
 }
 
