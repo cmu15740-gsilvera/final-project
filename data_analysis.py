@@ -29,7 +29,7 @@ def run_benchmark(num_readers: int, num_writers: int, mode: int) -> Tuple[float,
 
 def main():
     sync_modes = {"RCU": 0, "LOCK": 1, "ATOMIC": 2, "NONE": 3}
-    mode = sync_modes["RCU"]
+    mode = sync_modes["NONE"]
     data = {}
     i = 0
     MAX_READERS = 10
