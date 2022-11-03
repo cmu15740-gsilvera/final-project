@@ -37,12 +37,25 @@ counter_t *gbl_counter = new counter_t(GLOBAL_AMNT); // this is the global!
 pthread_mutex_t lock;        // general purpose pthread mutex
 pthread_mutex_t stdout_lock; // stdout_lock is just for pretty printing
 
-uint64_t get_current_time_us()
+typedef uint64_t cycles_t;
+static inline cycles_t get_cycles()
 {
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    return 1000000ull * tv.tv_sec + tv.tv_usec;
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts))
+        return -1ULL;
+    return ((uint64_t)ts.tv_sec * 1000000000ULL) + ts.tv_nsec;
 }
+
+struct ThreadData
+{
+    pthread_t thread;
+    counter_t counter = 0;
+    size_t id = 0;
+    cycles_t cycles = 0;
+};
+
+std::vector<ThreadData> readers;
+std::vector<ThreadData> writers;
 
 inline void update_counter()
 {
@@ -99,17 +112,6 @@ inline void read_counter(counter_t &var)
     assert(var == GLOBAL_AMNT);
 }
 
-struct ThreadData
-{
-    pthread_t thread;
-    counter_t counter = 0;
-    size_t id = 0;
-    float runtime_s = 0.f;
-};
-
-std::vector<ThreadData> readers;
-std::vector<ThreadData> writers;
-
 #define cout_lock(x)                                                                                                   \
     pthread_mutex_lock(&stdout_lock);                                                                                  \
     std::cout << x << std::endl;                                                                                       \
@@ -124,7 +126,7 @@ void *write_behavior(void *args)
         exit(1);
     }
     cout_lock("Begin writer thread " << id);
-    auto start_t_us = get_current_time_us();
+    auto t0_ns = get_cycles();
     if (use_rcu)
         urcu_memb_register_thread();
 
@@ -136,12 +138,13 @@ void *write_behavior(void *args)
             usleep(10); // sleep for this many microseconds
         }
     }
-    writers[id].runtime_s = (get_current_time_us() - start_t_us) / 1e6;
+    auto t1_ns = get_cycles();
+    writers[id].cycles = (t1_ns - t0_ns);
 
     if (use_rcu)
         urcu_memb_unregister_thread();
 
-    cout_lock("Finish writer thread " << id << " | Runtime: " << writers[id].runtime_s << "s");
+    cout_lock("Finish writer thread " << id << " | Runtime: " << writers[id].cycles / 1e9 << "s");
     return NULL;
 }
 
@@ -154,7 +157,7 @@ void *read_behavior(void *args)
         exit(1);
     }
     cout_lock("Begin reader thread " << id);
-    auto start_t_us = get_current_time_us();
+    auto t0_ns = get_cycles();
     if (use_rcu)
         urcu_memb_register_thread();
 
@@ -165,12 +168,13 @@ void *read_behavior(void *args)
             read_counter(readers[id].counter); // read global counter
         }
     }
-    readers[id].runtime_s = (get_current_time_us() - start_t_us) / 1e6;
+    auto t1_ns = get_cycles();
+    readers[id].cycles = (t1_ns - t0_ns);
 
     if (use_rcu)
         urcu_memb_unregister_thread();
 
-    cout_lock("Finish reader thread " << id << " | Runtime: " << readers[id].runtime_s << "s");
+    cout_lock("Finish reader thread " << id << " | Runtime: " << readers[id].cycles / 1e9 << "s");
     return NULL;
 }
 
@@ -225,32 +229,34 @@ int main(int argc, char **argv)
     // sleep(3);
 
     // join readers
-    float tot_read_time = 0.f;
+    cycles_t tot_read_cycles = 0;
     for (size_t id = 0; id < readers.size(); id++)
     {
         pthread_join(readers[id].thread, NULL);
-        tot_read_time += readers[id].runtime_s;
+        tot_read_cycles += readers[id].cycles;
     }
 
     // join writers
-    float tot_write_time = 0.f;
+    cycles_t tot_write_cycles = 0;
     for (size_t id = 0; id < writers.size(); id++)
     {
         pthread_join(writers[id].thread, NULL);
-        tot_write_time += writers[id].runtime_s;
+        tot_write_cycles += writers[id].cycles;
     }
 
     if (num_readers > 0)
     {
-        float time_per_read = tot_read_time / static_cast<float>(readers.size() * READ_LOOP);
-        std::cout << std::fixed << std::setprecision(7) << "Total time: " << tot_read_time / readers.size()
-                  << "s | Time per read: " << time_per_read << "s" << std::endl;
+        float tot_read_time = tot_read_cycles / 1e9;
+        cycles_t cycles_per_read = tot_read_cycles / static_cast<float>(readers.size() * READ_LOOP);
+        std::cout << std::fixed << std::setprecision(3) << "Read -- Avg time: " << tot_read_time / readers.size()
+                  << "s | Cycles per read: " << cycles_per_read << std::endl;
     }
     if (num_writers > 0)
     {
-        float time_per_write = tot_write_time / static_cast<float>(writers.size() * WRITE_LOOP);
-        std::cout << std::fixed << std::setprecision(7) << "Total time: " << tot_write_time / readers.size()
-                  << "s | Time per write: " << time_per_write << "s" << std::endl;
+        float tot_write_time = tot_write_cycles / 1e9;
+        cycles_t cycles_per_write = tot_write_cycles / static_cast<float>(writers.size() * WRITE_LOOP);
+        std::cout << std::fixed << std::setprecision(3) << "Write -- Avg time: " << tot_write_time / readers.size()
+                  << "s | Cycles per write: " << cycles_per_write << std::endl;
     }
 
     std::cout << "Final counter: " << (*gbl_counter) << std::endl;
