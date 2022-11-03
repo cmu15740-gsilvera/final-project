@@ -14,18 +14,17 @@
 size_t num_readers; // set by user cmd options
 size_t num_writers; // set by user cmd options
 
-#define OUTER_READ_LOOP 2000U
-#define INNER_READ_LOOP 100000U
-#define READ_LOOP ((unsigned long long)OUTER_READ_LOOP * INNER_READ_LOOP)
+size_t RD_OUTER_LOOP = 2000U;
+size_t RD_INNER_LOOP = 100000U;
 
-#define OUTER_WRITE_LOOP 10U
-#define INNER_WRITE_LOOP 200U
-#define WRITE_LOOP ((unsigned long long)OUTER_WRITE_LOOP * INNER_WRITE_LOOP)
+size_t WR_OUTER_LOOP = 10U;
+size_t WR_INNER_LOOP = 200U;
 
 typedef size_t counter_t;
 counter_t *gbl_counter = new counter_t(0); // this is the global!
 
 bool run_benchmark = false; // used as a barrier flag to start all threads at once (on true)
+bool verbose = true;        // disable with 4th optional param
 
 std::atomic<counter_t> gbl_counter_atomic{0};
 pthread_rwlock_t rwlock;     // reader-writer lock (supports concurrent readers)
@@ -34,7 +33,8 @@ pthread_mutex_t stdout_lock; // stdout_lock is just for pretty printing to stdou
 
 #define cout_lock(x)                                                                                                   \
     pthread_mutex_lock(&stdout_lock);                                                                                  \
-    std::cout << x << std::endl;                                                                                       \
+    if (verbose)                                                                                                       \
+        std::cout << x << std::endl;                                                                                   \
     pthread_mutex_unlock(&stdout_lock);
 
 typedef uint64_t cycles_t;
@@ -181,9 +181,9 @@ void *write_behavior(void *args)
         rcu_register_thread();
 
     auto &writer = writers[id];
-    for (size_t i = 0; i < OUTER_WRITE_LOOP; i++)
+    for (size_t i = 0; i < WR_OUTER_LOOP; i++)
     {
-        for (size_t j = 0; j < INNER_WRITE_LOOP; j++)
+        for (size_t j = 0; j < WR_INNER_LOOP; j++)
         {
             auto t0_ns = get_cycles();
             update_counter();
@@ -219,9 +219,9 @@ void *read_behavior(void *args)
 
     auto &reader = readers[id];
 
-    for (size_t i = 0; i < OUTER_READ_LOOP; i++)
+    for (size_t i = 0; i < RD_OUTER_LOOP; i++)
     {
-        for (size_t j = 0; j < INNER_READ_LOOP; j++)
+        for (size_t j = 0; j < RD_INNER_LOOP; j++)
         {
             read_counter(reader.counter); // read global counter
         }
@@ -239,18 +239,33 @@ void *read_behavior(void *args)
 
 int main(int argc, char **argv)
 {
-    if (argc < 2)
+    if (argc < 8)
     {
-        std::cout << "Usage: ./benchmark.out {num_readers} {num_writers} [0(RCU), 1(LOCK), 2(ATOMIC), 3(RACE)]"
+        std::cout << "Usage: {num_readers} {num_writers} [0(RCU)|1(LOCK)|2(ATOMIC)|3(RACE)] {RD_OUTER_LOOP} "
+                     "{RD_INNER_LOOP} {WR_OUTER_LOOP} {WR_INNER_LOOP}"
                   << std::endl;
         exit(1);
     }
     num_readers = std::atoi(argv[1]);
     num_writers = std::atoi(argv[2]);
     sync_method = (SyncMethod)(std::atoi(argv[3]));
-    std::cout << "Running with " << num_readers << " readers & " << num_writers << " writers" << std::endl;
+    RD_OUTER_LOOP = std::atoi(argv[4]);
+    RD_INNER_LOOP = std::atoi(argv[5]);
+    WR_OUTER_LOOP = std::atoi(argv[6]);
+    WR_INNER_LOOP = std::atoi(argv[7]);
 
-    std::cout << "Synchronization method: " << SyncName(sync_method) << std::endl << std::endl;
+    if (argc == 9) // optional param
+        verbose = false;
+
+    if (verbose)
+    {
+        std::cout << "Reader threads running " << RD_OUTER_LOOP << " outer loops of " << RD_INNER_LOOP << " reads"
+                  << std::endl;
+        std::cout << "Writer threads running " << WR_OUTER_LOOP << " outer loops of " << WR_INNER_LOOP << " writes"
+                  << std::endl;
+        std::cout << "Running with " << num_readers << " readers & " << num_writers << " writers" << std::endl;
+        std::cout << "Synchronization method: " << SyncName(sync_method) << std::endl << std::endl;
+    }
 
     pthread_rwlock_init(&rwlock, NULL);
     pthread_mutex_init(&mutexlock, NULL);
@@ -304,16 +319,24 @@ int main(int argc, char **argv)
     if (num_readers > 0)
     {
         float tot_read_time = tot_read_cycles / 1e9;
+        const size_t READ_LOOP = RD_INNER_LOOP * RD_OUTER_LOOP;
         float cycles_per_read = tot_read_cycles / static_cast<float>(readers.size() * READ_LOOP);
-        std::cout << std::fixed << std::setprecision(3) << "Read -- Avg time: " << tot_read_time / readers.size()
-                  << "s | Cycles per read: " << cycles_per_read << std::endl;
+        if (verbose)
+            std::cout << std::fixed << std::setprecision(3) << "Read -- Avg time: " << tot_read_time / readers.size()
+                      << "s | Cycles per read: " << cycles_per_read << std::endl;
+        else
+            std::cout << cycles_per_read << std::endl;
     }
     if (num_writers > 0)
     {
         float tot_write_time = tot_write_cycles / 1e9;
+        const size_t WRITE_LOOP = WR_INNER_LOOP * WR_OUTER_LOOP;
         float cycles_per_write = tot_write_cycles / static_cast<float>(writers.size() * WRITE_LOOP);
-        std::cout << std::fixed << std::setprecision(3) << "Write -- Avg time: " << tot_write_time / writers.size()
-                  << "s | Cycles per write: " << cycles_per_write << std::endl;
+        if (verbose)
+            std::cout << std::fixed << std::setprecision(3) << "Write -- Avg time: " << tot_write_time / writers.size()
+                      << "s | Cycles per write: " << cycles_per_write << std::endl;
+        else
+            std::cout << cycles_per_write << std::endl;
     }
 
     if (sync_method == SyncMethod::ATOMIC)
@@ -321,7 +344,8 @@ int main(int argc, char **argv)
         (*gbl_counter) = gbl_counter_atomic.load(); // ensure the global atomic is used as the final "count"
     }
 
-    std::cout << "Final counter: " << (*gbl_counter) << std::endl;
+    if (verbose)
+        std::cout << "Final counter: " << (*gbl_counter) << std::endl;
     pthread_rwlock_destroy(&rwlock);
     pthread_mutex_destroy(&mutexlock);
     pthread_mutex_destroy(&stdout_lock);
