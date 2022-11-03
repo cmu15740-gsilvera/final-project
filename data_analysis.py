@@ -116,7 +116,11 @@ def plot_for_mode(mode: str, data: np.ndarray) -> None:
 
 
 def plot_cmp(
-    data: np.ndarray, num_readers: int, num_writers: int, modes: list = None
+    data: np.ndarray,
+    num_readers: int,
+    num_writers: int,
+    modes: list = None,
+    y_scale=lambda x: x,
 ) -> None:
     if modes is None:
         modes = list(sync_modes.keys())  # all of them
@@ -128,13 +132,18 @@ def plot_cmp(
     def plot_data(op_type: str) -> None:
         fig, ax = plt.subplots(1, 1, figsize=(10, 7))
         idx = 0 if op_type == "Read" else 1
+        raw_ideal = cmp_data[sync_modes["RCU"], idx]
         for m in modes:
+            raw_ht: float = cmp_data[sync_modes[m], idx]
+            height: float = y_scale(raw_ht)
             ax.bar(
                 x=m,
-                height=np.log10(cmp_data[sync_modes[m], idx]),
+                height=height,
                 width=0.4,
                 color="r",
             )
+            speedup: float = raw_ht / raw_ideal
+            ax.text(x=m, ha="center", y=height / 2, s=f"{speedup:.3f}x", color="black")
         ax.set_ylabel("(log10) CPU Cycles (nanoseconds)")
         ax.set_xlabel(f"Type of concurrency control/synchronization method")
         plt.title(
@@ -143,7 +152,7 @@ def plot_cmp(
         sub_dir: str = "cmp_diff"
         os.makedirs(os.path.join(results, sub_dir), exist_ok=True)
         filepath: str = os.path.join(
-            results, sub_dir, f"cmp_{op_type.lower()}_{num_readers}_{num_writers}.jpg"
+            results, sub_dir, f"cmp_{op_type.lower()}_{num_readers}_{num_writers}.png"
         )
         print(f"saving figure to {filepath}")
         fig.savefig(filepath)
@@ -161,7 +170,9 @@ def data_analysis(datafile: str):
         plot_for_mode(mode, data)
 
     # plot comparatively across modes
-    plot_cmp(data, num_readers=8, num_writers=2)
+    plot_cmp(data, num_readers=8, num_writers=2, y_scale=lambda x: np.log10(x))
+    plot_cmp(data, num_readers=9, num_writers=1, y_scale=lambda x: np.log10(x))
+    plot_cmp(data, num_readers=8, num_writers=9, y_scale=lambda x: np.log10(x))
 
 
 if __name__ == "__main__":
