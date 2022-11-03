@@ -42,7 +42,9 @@ def data_collection(datafile: str):
         for num_readers in range(0, MAX_READERS):
             for num_writers in range(0, MAX_WRITERS):
                 value = run_benchmark(
-                    num_readers=num_readers, num_writers=num_writers, mode=sync_modes[mode]
+                    num_readers=num_readers,
+                    num_writers=num_writers,
+                    mode=sync_modes[mode],
                 )
                 data_all[sync_modes[mode], num_readers, num_writers, :] = value
                 i += 1
@@ -52,9 +54,6 @@ def data_collection(datafile: str):
                     flush=True,
                 )
         print(f"({mode}) Done {total}/{total} (100.0%)")
-    # save to file
-    # with open(datafile, "w+") as f:
-    #     f.write(str(data_all))
     np.save(datafile, data_all)
     print("Done!")
 
@@ -78,7 +77,7 @@ def plot_for_mode(mode: str, data: np.ndarray) -> None:
         types = ("Read", "Write")
         primary_type = types[RW_IDX]
         secondary_type = types[1 - RW_IDX]  # the other one
-        fig, ax = plt.subplots(1, 1)
+        fig, ax = plt.subplots(1, 1, figsize=(10, 7))
         ax_plots = []  # for the legends
         for th in num_lines:
             if RW_IDX == 0:
@@ -107,20 +106,54 @@ def plot_for_mode(mode: str, data: np.ndarray) -> None:
     plot_data(
         RW_IDX=0,  # plotting on reader threads primarily
         rd_th_range=np.arange(nR),  # all readers
-        wr_th_range=np.array([1, 8]),
+        wr_th_range=np.array([1, 3, 8]),
     )
     plot_data(
         RW_IDX=1,  # plotting on writer threads primarily
-        rd_th_range=np.array([1, 8]),
+        rd_th_range=np.array([1, 3, 8]),
         wr_th_range=np.arange(nW),  # all writers
     )
 
 
+def plot_cmp(
+    data: np.ndarray, num_readers: int, num_writers: int, modes: list = None
+) -> None:
+    if modes is None:
+        modes = list(sync_modes.keys())  # all of them
+
+    cmp_data = np.zeros(shape=(len(modes), 2))
+    for m in modes:
+        cmp_data[sync_modes[m], :] = data[sync_modes[m], num_readers, num_writers, :]
+
+    def plot_data(op_type: str) -> None:
+        fig, ax = plt.subplots(1, 1, figsize=(10, 7))
+        idx = 0 if op_type == "Read" else 1
+        for m in modes:
+            ax.bar(
+                x=m,
+                height=np.log10(cmp_data[sync_modes[m], idx]),
+                width=0.4,
+                color="r",
+            )
+        ax.set_ylabel("(log10) CPU Cycles (nanoseconds)")
+        ax.set_xlabel(f"Type of concurrency control/synchronization method")
+        plt.title(
+            f"{op_type} performance across modes for {num_readers} readers threads & {num_writers} writer threads"
+        )
+        sub_dir: str = "cmp_diff"
+        os.makedirs(os.path.join(results, sub_dir), exist_ok=True)
+        filepath: str = os.path.join(
+            results, sub_dir, f"cmp_{op_type.lower()}_{num_readers}_{num_writers}.jpg"
+        )
+        print(f"saving figure to {filepath}")
+        fig.savefig(filepath)
+        plt.close()
+
+    plot_data("Read")
+    plot_data("Write")
+
+
 def data_analysis(datafile: str):
-    # data_str: str = None
-    # with open(datafile, "r") as f:
-    #     data_str = f.read()
-    # data = np.fromstring(data_str) # only works on 1D arrays
     data = np.load(datafile)
 
     # plot individually per mode
@@ -128,10 +161,10 @@ def data_analysis(datafile: str):
         plot_for_mode(mode, data)
 
     # plot comparatively across modes
-    # plot_cmp(num_readers=8, num_writers=2, data_dict)
+    plot_cmp(data, num_readers=8, num_writers=2)
 
 
 if __name__ == "__main__":
     datafile = "data.npy"
-    data_collection(datafile)
+    # data_collection(datafile)
     data_analysis(datafile)
