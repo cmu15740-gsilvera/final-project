@@ -31,8 +31,7 @@ bool use_rcu;       // set by user cmd options
 #define INNER_WRITE_LOOP 200U
 #define WRITE_LOOP ((unsigned long long)OUTER_WRITE_LOOP * INNER_WRITE_LOOP)
 
-#define GLOBAL_AMNT 8
-counter_t *gbl_counter = new counter_t(GLOBAL_AMNT); // this is the global!
+counter_t *gbl_counter = new counter_t(0); // this is the global!
 
 pthread_rwlock_t rwlock;     // reader-writer lock (supports concurrent readers)
 pthread_mutex_t mutexlock;   // single user (reader or writer) mutex
@@ -44,6 +43,7 @@ static inline cycles_t get_cycles()
     struct timespec ts;
     if (clock_gettime(CLOCK_MONOTONIC, &ts))
         return -1ULL;
+    // assuming nanoseconds ~ cycles (approximately true)
     return ((uint64_t)ts.tv_sec * 1000000000ULL) + ts.tv_nsec;
 }
 
@@ -73,7 +73,7 @@ inline void update_counter()
 #else
         old_counter = (counter_t *)rcu_dereference((void *)gbl_counter);
 #endif
-        *new_counter = GLOBAL_AMNT; // (*old_counter + 1); // bump
+        *new_counter = (*old_counter + 1); // bump
         rcu_assign_pointer(gbl_counter, new_counter);
         pthread_mutex_unlock(&mutexlock);
         urcu_memb_synchronize_rcu(); // synchronize_rcu();
@@ -82,13 +82,14 @@ inline void update_counter()
     else
     {
         pthread_rwlock_wrlock(&rwlock); // lock for writing
-        (*gbl_counter) = GLOBAL_AMNT;
+        (*gbl_counter)++;               // bump
         pthread_rwlock_unlock(&rwlock);
     }
 }
 
 inline void read_counter(counter_t &var)
 {
+    counter_t old_val = var;
     if (use_rcu)
     {
         urcu_memb_read_lock();
@@ -110,7 +111,7 @@ inline void read_counter(counter_t &var)
         var = (*gbl_counter);
         pthread_rwlock_unlock(&rwlock);
     }
-    assert(var == GLOBAL_AMNT);
+    assert(old_val <= var); // since gbl_counter is bumping positively always
 }
 
 #define cout_lock(x)                                                                                                   \
@@ -136,7 +137,7 @@ void *write_behavior(void *args)
         for (size_t j = 0; j < INNER_WRITE_LOOP; j++)
         {
             update_counter();
-            usleep(10); // sleep for this many microseconds
+            usleep(1); // sleep for this many microseconds
         }
     }
     auto t1_ns = get_cycles();
@@ -145,7 +146,7 @@ void *write_behavior(void *args)
     if (use_rcu)
         urcu_memb_unregister_thread();
 
-    cout_lock("Finish writer thread " << id << " | Runtime: " << writers[id].cycles / 1e9 << "s");
+    cout_lock("Finish w(" << id << ") @ " << writers[id].cycles / 1e9 << "s");
     return NULL;
 }
 
@@ -175,7 +176,7 @@ void *read_behavior(void *args)
     if (use_rcu)
         urcu_memb_unregister_thread();
 
-    cout_lock("Finish reader thread " << id << " | Runtime: " << readers[id].cycles / 1e9 << "s");
+    cout_lock("Finish r(" << id << ") @ " << readers[id].cycles / 1e9 << "s");
     return NULL;
 }
 
