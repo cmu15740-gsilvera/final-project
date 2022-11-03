@@ -14,7 +14,7 @@
 size_t num_readers; // set by user cmd options
 size_t num_writers; // set by user cmd options
 
-#define OUTER_READ_LOOP 200U
+#define OUTER_READ_LOOP 2000U
 #define INNER_READ_LOOP 100000U
 #define READ_LOOP ((unsigned long long)OUTER_READ_LOOP * INNER_READ_LOOP)
 
@@ -24,6 +24,8 @@ size_t num_writers; // set by user cmd options
 
 typedef size_t counter_t;
 counter_t *gbl_counter = new counter_t(0); // this is the global!
+
+bool run_benchmark = false; // used as a barrier flag to start all threads at once (on true)
 
 std::atomic<counter_t> gbl_counter_atomic{0};
 pthread_rwlock_t rwlock;     // reader-writer lock (supports concurrent readers)
@@ -47,12 +49,12 @@ static inline cycles_t get_cycles()
 
 enum SyncMethod : uint8_t
 {
-    RCU = 0,
-    LOCK,
-    ATOMIC,
-    RACE,
+    RCU = 0, // uses RCU
+    LOCK,    // uses pthread_rwlock
+    ATOMIC,  // uses std::atomic
+    RACE,    // uses NO synchronization
     // ...
-    SIZE,
+    SIZE, // [META] how many methods do we have?
 };
 enum SyncMethod sync_method; // global concurrency synchronization control parameter
 
@@ -99,7 +101,7 @@ inline void update_counter()
         // https://www.kernel.org/doc/html/latest/RCU/whatisRCU.html#what-are-some-example-uses-of-core-rcu-api
         counter_t *new_counter;
         counter_t *old_counter;
-        new_counter = new counter_t(0);
+        new_counter = new counter_t{0};
         pthread_mutex_lock(&mutexlock);
         old_counter = gbl_counter;                                 // copy ptr of global
         *new_counter = (*old_counter + 1);                         // bump global's value to local new
@@ -170,10 +172,15 @@ void *write_behavior(void *args)
         std::cerr << "Thread (writer) out of bounds! Id: " << id << std::endl;
         exit(1);
     }
+
+    while (!run_benchmark) // wait until run_benchmark == true to start all threads at once
+        usleep(1);
+
     cout_lock("Begin writer thread " << id);
     if (using_rcu())
         rcu_register_thread();
 
+    auto &writer = writers[id];
     for (size_t i = 0; i < OUTER_WRITE_LOOP; i++)
     {
         for (size_t j = 0; j < INNER_WRITE_LOOP; j++)
@@ -181,15 +188,15 @@ void *write_behavior(void *args)
             auto t0_ns = get_cycles();
             update_counter();
             auto t1_ns = get_cycles();
-            writers[id].cycles += (t1_ns - t0_ns); // don't account the usleep usec
-            usleep(1);                             // sleep for this many microseconds
+            writer.cycles += (t1_ns - t0_ns); // don't account the usleep usec
+            usleep(1);                        // sleep for this many microseconds
         }
     }
 
     if (using_rcu())
         rcu_unregister_thread();
 
-    cout_lock("Finish w(" << id << ") @ " << writers[id].cycles / 1e9 << "s");
+    cout_lock("Finish w(" << id << ") @ " << writer.cycles / 1e9 << "s");
     return NULL;
 }
 
@@ -202,25 +209,31 @@ void *read_behavior(void *args)
         exit(1);
     }
     cout_lock("Begin reader thread " << id);
+
+    while (!run_benchmark) // wait until run_benchmark == true to start all threads at once
+        usleep(1);
+
     auto t0_ns = get_cycles();
     if (using_rcu())
         rcu_register_thread();
+
+    auto &reader = readers[id];
 
     for (size_t i = 0; i < OUTER_READ_LOOP; i++)
     {
         for (size_t j = 0; j < INNER_READ_LOOP; j++)
         {
-            read_counter(readers[id].counter); // read global counter
+            read_counter(reader.counter); // read global counter
         }
         _rcu_quiescent_state();
     }
     auto t1_ns = get_cycles();
-    readers[id].cycles = (t1_ns - t0_ns);
+    reader.cycles = (t1_ns - t0_ns);
 
     if (using_rcu())
         rcu_unregister_thread();
 
-    cout_lock("Finish r(" << id << ") @ " << readers[id].cycles / 1e9 << "s w/ " << readers[id].counter);
+    cout_lock("Finish r(" << id << ") @ " << reader.cycles / 1e9 << "s w/ " << reader.counter);
     return NULL;
 }
 
@@ -269,22 +282,23 @@ int main(int argc, char **argv)
         }
     }
 
+    run_benchmark = true; // start all the threads at once!
     // let it run for a while ...
 
     // join readers
     cycles_t tot_read_cycles = 0;
-    for (size_t id = 0; id < readers.size(); id++)
+    for (auto &reader : readers)
     {
-        pthread_join(readers[id].thread, NULL);
-        tot_read_cycles += readers[id].cycles;
+        pthread_join(reader.thread, NULL);
+        tot_read_cycles += reader.cycles;
     }
 
     // join writers
     cycles_t tot_write_cycles = 0;
-    for (size_t id = 0; id < writers.size(); id++)
+    for (auto &writer : writers)
     {
-        pthread_join(writers[id].thread, NULL);
-        tot_write_cycles += writers[id].cycles;
+        pthread_join(writer.thread, NULL);
+        tot_write_cycles += writer.cycles;
     }
 
     if (num_readers > 0)
