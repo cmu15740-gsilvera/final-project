@@ -8,18 +8,8 @@
 
 // userspace-RCU include
 #define _LGPL_SOURCE
-#if !defined(_LGPL_SOURCE)
-// https://gist.github.com/azat/066d165154fa1efe6000fac59062cc25
-#error URCU is very slow w/o _LGPL_SOURCE
-#endif
-#include <urcu/urcu-memb.h> // This is the preferred version of the library
-
-#if defined(_LGBL_SOURCE)
-typedef volatile size_t counter_t;
-#else
-// no volatile for non-_LGPL_SOURCE
-typedef size_t counter_t;
-#endif
+// https://github.com/urcu/userspace-rcu#usage-of-liburcu-qsbr
+#include <urcu-qsbr.h> // fastest for reads (slightly more intrusive in code)
 
 size_t num_readers; // set by user cmd options
 size_t num_writers; // set by user cmd options
@@ -32,12 +22,18 @@ size_t num_writers; // set by user cmd options
 #define INNER_WRITE_LOOP 200U
 #define WRITE_LOOP ((unsigned long long)OUTER_WRITE_LOOP * INNER_WRITE_LOOP)
 
+typedef size_t counter_t;
 counter_t *gbl_counter = new counter_t(0); // this is the global!
 
 std::atomic<counter_t> gbl_counter_atomic{0};
 pthread_rwlock_t rwlock;     // reader-writer lock (supports concurrent readers)
 pthread_mutex_t mutexlock;   // single user (reader or writer) mutex
 pthread_mutex_t stdout_lock; // stdout_lock is just for pretty printing to stdout (cout)
+
+#define cout_lock(x)                                                                                                   \
+    pthread_mutex_lock(&stdout_lock);                                                                                  \
+    std::cout << x << std::endl;                                                                                       \
+    pthread_mutex_unlock(&stdout_lock);
 
 typedef uint64_t cycles_t;
 static inline cycles_t get_cycles()
@@ -49,7 +45,7 @@ static inline cycles_t get_cycles()
     return ((uint64_t)ts.tv_sec * 1000000000ULL) + ts.tv_nsec;
 }
 
-enum SyncMethod
+enum SyncMethod : uint8_t
 {
     RCU = 0,
     LOCK,
@@ -105,15 +101,11 @@ inline void update_counter()
         counter_t *old_counter;
         new_counter = new counter_t(0);
         pthread_mutex_lock(&mutexlock);
-#if defined(_LGPL_SOURCE)
-        old_counter = rcu_dereference(gbl_counter);
-#else
-        old_counter = (counter_t *)rcu_dereference((void *)gbl_counter);
-#endif
-        *new_counter = (*old_counter + 1); // bump
-        rcu_assign_pointer(gbl_counter, new_counter);
+        old_counter = gbl_counter;                                 // copy ptr of global
+        *new_counter = (*old_counter + 1);                         // bump global's value to local new
+        old_counter = rcu_xchg_pointer(&gbl_counter, new_counter); // swap with global
         pthread_mutex_unlock(&mutexlock);
-        urcu_memb_synchronize_rcu(); // synchronize_rcu();
+        synchronize_rcu(); // synchronize_rcu();
         delete old_counter;
         break;
     }
@@ -142,18 +134,12 @@ inline void read_counter(counter_t &var)
     switch (sync_method)
     {
     case (SyncMethod::RCU): {
-        urcu_memb_read_lock();
+        _rcu_read_lock();
         counter_t *local_ptr = nullptr;
-#if defined(_LGPL_SOURCE)
-        local_ptr = rcu_dereference(gbl_counter);
-#else
-        local_ptr = (counter_t *)rcu_dereference((void *)gbl_counter);
-#endif
+        local_ptr = _rcu_dereference(gbl_counter);
         if (local_ptr)
-        {
             var = (*local_ptr);
-        }
-        urcu_memb_read_unlock();
+        _rcu_read_unlock();
         break;
     }
     case (SyncMethod::LOCK): {
@@ -176,11 +162,6 @@ inline void read_counter(counter_t &var)
     assert(old_val <= var); // since gbl_counter is bumping positively always
 }
 
-#define cout_lock(x)                                                                                                   \
-    pthread_mutex_lock(&stdout_lock);                                                                                  \
-    std::cout << x << std::endl;                                                                                       \
-    pthread_mutex_unlock(&stdout_lock);
-
 void *write_behavior(void *args)
 {
     size_t id = *(size_t *)args;
@@ -190,23 +171,23 @@ void *write_behavior(void *args)
         exit(1);
     }
     cout_lock("Begin writer thread " << id);
-    auto t0_ns = get_cycles();
     if (using_rcu())
-        urcu_memb_register_thread();
+        rcu_register_thread();
 
     for (size_t i = 0; i < OUTER_WRITE_LOOP; i++)
     {
         for (size_t j = 0; j < INNER_WRITE_LOOP; j++)
         {
+            auto t0_ns = get_cycles();
             update_counter();
-            usleep(1); // sleep for this many microseconds
+            auto t1_ns = get_cycles();
+            writers[id].cycles += (t1_ns - t0_ns); // don't account the usleep usec
+            usleep(1);                             // sleep for this many microseconds
         }
     }
-    auto t1_ns = get_cycles();
-    writers[id].cycles = (t1_ns - t0_ns);
 
     if (using_rcu())
-        urcu_memb_unregister_thread();
+        rcu_unregister_thread();
 
     cout_lock("Finish w(" << id << ") @ " << writers[id].cycles / 1e9 << "s");
     return NULL;
@@ -223,7 +204,7 @@ void *read_behavior(void *args)
     cout_lock("Begin reader thread " << id);
     auto t0_ns = get_cycles();
     if (using_rcu())
-        urcu_memb_register_thread();
+        rcu_register_thread();
 
     for (size_t i = 0; i < OUTER_READ_LOOP; i++)
     {
@@ -231,12 +212,13 @@ void *read_behavior(void *args)
         {
             read_counter(readers[id].counter); // read global counter
         }
+        _rcu_quiescent_state();
     }
     auto t1_ns = get_cycles();
     readers[id].cycles = (t1_ns - t0_ns);
 
     if (using_rcu())
-        urcu_memb_unregister_thread();
+        rcu_unregister_thread();
 
     cout_lock("Finish r(" << id << ") @ " << readers[id].cycles / 1e9 << "s w/ " << readers[id].counter);
     return NULL;
@@ -256,9 +238,6 @@ int main(int argc, char **argv)
     std::cout << "Running with " << num_readers << " readers & " << num_writers << " writers" << std::endl;
 
     std::cout << "Synchronization method: " << SyncName(sync_method) << std::endl << std::endl;
-
-    if (using_rcu())
-        urcu_memb_init(); // rcu_init();
 
     pthread_rwlock_init(&rwlock, NULL);
     pthread_mutex_init(&mutexlock, NULL);
@@ -291,7 +270,6 @@ int main(int argc, char **argv)
     }
 
     // let it run for a while ...
-    // sleep(3);
 
     // join readers
     cycles_t tot_read_cycles = 0;
@@ -312,15 +290,15 @@ int main(int argc, char **argv)
     if (num_readers > 0)
     {
         float tot_read_time = tot_read_cycles / 1e9;
-        cycles_t cycles_per_read = tot_read_cycles / static_cast<float>(readers.size() * READ_LOOP);
+        float cycles_per_read = tot_read_cycles / static_cast<float>(readers.size() * READ_LOOP);
         std::cout << std::fixed << std::setprecision(3) << "Read -- Avg time: " << tot_read_time / readers.size()
                   << "s | Cycles per read: " << cycles_per_read << std::endl;
     }
     if (num_writers > 0)
     {
         float tot_write_time = tot_write_cycles / 1e9;
-        cycles_t cycles_per_write = tot_write_cycles / static_cast<float>(writers.size() * WRITE_LOOP);
-        std::cout << std::fixed << std::setprecision(3) << "Write -- Avg time: " << tot_write_time / readers.size()
+        float cycles_per_write = tot_write_cycles / static_cast<float>(writers.size() * WRITE_LOOP);
+        std::cout << std::fixed << std::setprecision(3) << "Write -- Avg time: " << tot_write_time / writers.size()
                   << "s | Cycles per write: " << cycles_per_write << std::endl;
     }
 
@@ -331,7 +309,7 @@ int main(int argc, char **argv)
 
     std::cout << "Final counter: " << (*gbl_counter) << std::endl;
     pthread_rwlock_destroy(&rwlock);
-    pthread_mutex_init(&mutexlock, NULL);
+    pthread_mutex_destroy(&mutexlock);
     pthread_mutex_destroy(&stdout_lock);
     delete gbl_counter;
     return 0;

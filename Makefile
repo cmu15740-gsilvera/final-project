@@ -2,7 +2,7 @@
 CXX=clang++
 CC=clang
 CXXFLAGS = -O -std=c++17 -Wall -Wextra -Wno-unused-parameter
-LINKER=-lurcu-memb -pthread
+LINKER=-lurcu-qsbr -pthread
 
 default: all
 
