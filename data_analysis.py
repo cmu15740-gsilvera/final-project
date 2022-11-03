@@ -10,7 +10,7 @@ os.makedirs(results, exist_ok=True)
 
 
 def run_benchmark(num_readers: int, num_writers: int, mode: int) -> Tuple[float, float]:
-    RD_OUTER_LOOP = 2000
+    RD_OUTER_LOOP = 2000 if mode != sync_modes["LOCK"] else 200
     RD_INNER_LOOP = 10000
     WR_OUTER_LOOP = 10
     WR_INNER_LOOP = 200
@@ -32,22 +32,19 @@ def run_benchmark(num_readers: int, num_writers: int, mode: int) -> Tuple[float,
     return time_read, time_write
 
 
-def data_collection(datafile: str = "data.log"):
-    data_all = {}
+def data_collection(datafile: str):
     MAX_READERS = 10
     MAX_WRITERS = 10
     total = MAX_READERS * MAX_WRITERS
-    i = 0
+    data_all = np.zeros(shape=(len(sync_modes), MAX_READERS, MAX_WRITERS, 2))
     for mode in sync_modes.keys():
-        data = {}
-        data_all[mode] = data
+        i = 0
         for num_readers in range(0, MAX_READERS):
             for num_writers in range(0, MAX_WRITERS):
                 value = run_benchmark(
-                    num_readers=num_readers, num_writers=num_writers, mode=mode
+                    num_readers=num_readers, num_writers=num_writers, mode=sync_modes[mode]
                 )
-                key = (num_readers, num_writers, mode)
-                data[key] = value
+                data_all[sync_modes[mode], num_readers, num_writers, :] = value
                 i += 1
                 print(
                     f"({mode}) Done {i}/{total} ({100 * i / total}%)",
@@ -56,95 +53,85 @@ def data_collection(datafile: str = "data.log"):
                 )
         print(f"({mode}) Done {total}/{total} (100.0%)")
     # save to file
-    with open(datafile, "w+") as f:
-        f.write(str(data_all))
+    # with open(datafile, "w+") as f:
+    #     f.write(str(data_all))
+    np.save(datafile, data_all)
     print("Done!")
 
 
-def _num_elems(data: dict, idx: int) -> int:
-    return len(set([keys[idx] for keys in data.keys()]))
-
-
-def _get_time_data(mode: str, data: dict, anchor: int, idx: int):
-    mode_int: int = sync_modes[mode]
-    max_elems = _num_elems(data, idx)  # num unique keys at idx
-    out = []
-    for iterator in range(max_elems):
-        if idx == 0:
-            key: tuple = (iterator, anchor, mode_int)
-        elif idx == 1:
-            key: tuple = (anchor, iterator, mode_int)
-        else:
-            raise NotImplementedError
-        out.append(data[key][idx])
-    return out
-
-
-def get_reader_data(mode: str, data: dict, writers: int):
-    return _get_time_data(mode, data, writers, 0)
-
-
-def get_writer_data(mode: str, data: dict, readers: int):
-    return _get_time_data(mode, data, readers, 1)
-
-
-def plot_for_mode(mode: str, data: dict) -> None:
+def plot_for_mode(mode: str, data: np.ndarray) -> None:
     print(f"Plotting data for mode: {mode}")
-    readers = range(_num_elems(data, 0))
-    writers = range(_num_elems(data, 1))
-    reader_data = [get_reader_data(mode, data, writers=w) for w in writers]
-    writer_data = [get_writer_data(mode, data, readers=r) for r in readers]
+
+    m, nR, nW, d = data.shape
+    assert m == len(sync_modes)
+    assert d == 2  # only tracking reads (0) and writes (1)
 
     def plot_data(
-        thread_type: str,
-        second_thread_type: str,
-        data,
-        thread_range,
-        second_thread_range,
+        RW_IDX: int,
+        rd_th_range: np.ndarray,
+        wr_th_range: np.ndarray,
     ) -> None:
+        assert RW_IDX == 0 or RW_IDX == 1  # reads or writes (last dim)
+        thread_ranges = (rd_th_range, wr_th_range)
+        x_axis = thread_ranges[RW_IDX]  # X axis (number of threads in this dim)
+        num_lines = thread_ranges[1 - RW_IDX]  # which threads are overlaid
+        types = ("Read", "Write")
+        primary_type = types[RW_IDX]
+        secondary_type = types[1 - RW_IDX]  # the other one
         fig, ax = plt.subplots(1, 1)
         ax_plots = []  # for the legends
-        for th in second_thread_range:
+        for th in num_lines:
+            if RW_IDX == 0:
+                cycle_time = data[sync_modes[mode], rd_th_range, th, RW_IDX]
+            else:
+                cycle_time = data[sync_modes[mode], th, wr_th_range, RW_IDX]
+            assert cycle_time.shape == x_axis.shape
             (ax_plot,) = ax.plot(
-                thread_range,
-                data[th],
+                x_axis[np.isfinite(cycle_time)],
+                cycle_time[np.isfinite(cycle_time)],  # ignore plotting None's
                 linewidth=3,
-                label=f"{second_thread_type} threads = {th}",
+                label=f"{secondary_type} threads = {th}",
             )
             ax_plots.append(ax_plot)
         ax.legend(handles=ax_plots)
         ax.set_ylabel("CPU Cycles (nanoseconds)")
-        ax.set_xlabel(f"Number of {thread_type} threads")
-        plt.title(f"Cycles per {thread_type} in {mode} mode")
+        ax.set_xlabel(f"Number of {primary_type} threads")
+        plt.title(f"Cycles per {primary_type} in {mode} mode")
         sub_dir: str = "cmp_same"
         os.makedirs(os.path.join(results, sub_dir), exist_ok=True)
-        filepath: str = os.path.join(results, sub_dir, f"{mode}_{thread_type}.jpg")
+        filepath: str = os.path.join(results, sub_dir, f"{mode}_{primary_type}.jpg")
         print(f"saving figure to {filepath}")
         fig.savefig(filepath)
         plt.close()
 
     plot_data(
-        "Read", "Write", reader_data, thread_range=readers, second_thread_range=[1, 8]
+        RW_IDX=0,  # plotting on reader threads primarily
+        rd_th_range=np.arange(nR),  # all readers
+        wr_th_range=np.array([1, 8]),
     )
     plot_data(
-        "Write", "Read", writer_data, thread_range=writers, second_thread_range=[1, 8]
+        RW_IDX=1,  # plotting on writer threads primarily
+        rd_th_range=np.array([1, 8]),
+        wr_th_range=np.arange(nW),  # all writers
     )
 
 
 def data_analysis(datafile: str):
-    data_dict = {}
-    with open(datafile, "r") as f:
-        data_dict = eval(f.read())
-    
+    # data_str: str = None
+    # with open(datafile, "r") as f:
+    #     data_str = f.read()
+    # data = np.fromstring(data_str) # only works on 1D arrays
+    data = np.load(datafile)
+
     # plot individually per mode
-    for mode in data_dict.keys():
-        plot_for_mode(mode, data_dict[mode])
-    
+    for mode in sync_modes.keys():
+        plot_for_mode(mode, data)
+
     # plot comparatively across modes
     # plot_cmp(num_readers=8, num_writers=2, data_dict)
 
 
 if __name__ == "__main__":
-    datafile = "data.log"
-    # data_collection(datafile)
+    datafile = "data.npy"
+    data_collection(datafile)
     data_analysis(datafile)
