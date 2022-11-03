@@ -1,7 +1,9 @@
+#include <atomic>    // std::atomic
 #include <iomanip>   // std::setprecision
 #include <iostream>  // cout
 #include <pthread.h> // pthread, mutex
 #include <time.h>    // timeval
+#include <unistd.h>  // usleep
 #include <vector>    // std::vector
 
 // userspace-RCU include
@@ -21,7 +23,6 @@ typedef size_t counter_t;
 
 size_t num_readers; // set by user cmd options
 size_t num_writers; // set by user cmd options
-bool use_rcu;       // set by user cmd options
 
 #define OUTER_READ_LOOP 200U
 #define INNER_READ_LOOP 100000U
@@ -33,6 +34,7 @@ bool use_rcu;       // set by user cmd options
 
 counter_t *gbl_counter = new counter_t(0); // this is the global!
 
+std::atomic<counter_t> gbl_counter_atomic{0};
 pthread_rwlock_t rwlock;     // reader-writer lock (supports concurrent readers)
 pthread_mutex_t mutexlock;   // single user (reader or writer) mutex
 pthread_mutex_t stdout_lock; // stdout_lock is just for pretty printing to stdout (cout)
@@ -45,6 +47,40 @@ static inline cycles_t get_cycles()
         return -1ULL;
     // assuming nanoseconds ~ cycles (approximately true)
     return ((uint64_t)ts.tv_sec * 1000000000ULL) + ts.tv_nsec;
+}
+
+enum SyncMethod
+{
+    RCU = 0,
+    LOCK,
+    ATOMIC,
+    RACE,
+    // ...
+    SIZE,
+};
+enum SyncMethod sync_method; // global concurrency synchronization control parameter
+
+std::string SyncName(SyncMethod m)
+{
+    switch (m)
+    {
+    case SyncMethod::RCU:
+        return "RCU";
+    case SyncMethod::LOCK:
+        return "LOCK";
+    case SyncMethod::ATOMIC:
+        return "ATOMIC";
+    case SyncMethod::RACE:
+        return "NONE";
+    default:
+        return "UNKNOWN";
+    }
+    return "";
+}
+
+inline bool using_rcu()
+{
+    return sync_method == SyncMethod::RCU;
 }
 
 struct ThreadData
@@ -60,8 +96,9 @@ std::vector<ThreadData> writers;
 
 inline void update_counter()
 {
-    if (use_rcu)
+    switch (sync_method)
     {
+    case (SyncMethod::RCU): {
         // similar to
         // https://www.kernel.org/doc/html/latest/RCU/whatisRCU.html#what-are-some-example-uses-of-core-rcu-api
         counter_t *new_counter;
@@ -78,20 +115,33 @@ inline void update_counter()
         pthread_mutex_unlock(&mutexlock);
         urcu_memb_synchronize_rcu(); // synchronize_rcu();
         delete old_counter;
+        break;
     }
-    else
-    {
+    case (SyncMethod::LOCK): {
         pthread_rwlock_wrlock(&rwlock); // lock for writing
         (*gbl_counter)++;               // bump
         pthread_rwlock_unlock(&rwlock);
+        break;
+    }
+    case (SyncMethod::ATOMIC): {
+        gbl_counter_atomic++; // bump
+        break;
+    }
+    case (SyncMethod::RACE): {
+        (*gbl_counter)++; // bump
+        break;
+    }
+    default:
+        throw std::runtime_error("Not implemented!");
     }
 }
 
 inline void read_counter(counter_t &var)
 {
     counter_t old_val = var;
-    if (use_rcu)
+    switch (sync_method)
     {
+    case (SyncMethod::RCU): {
         urcu_memb_read_lock();
         counter_t *local_ptr = nullptr;
 #if defined(_LGPL_SOURCE)
@@ -104,12 +154,24 @@ inline void read_counter(counter_t &var)
             var = (*local_ptr);
         }
         urcu_memb_read_unlock();
+        break;
     }
-    else
-    {
+    case (SyncMethod::LOCK): {
         pthread_rwlock_rdlock(&rwlock); // lock for reading
         var = (*gbl_counter);
         pthread_rwlock_unlock(&rwlock);
+        break;
+    }
+    case (SyncMethod::ATOMIC): {
+        var = gbl_counter_atomic.load();
+        break;
+    }
+    case (SyncMethod::RACE): {
+        var = (*gbl_counter);
+        break;
+    }
+    default:
+        throw std::runtime_error("Not implemented!");
     }
     assert(old_val <= var); // since gbl_counter is bumping positively always
 }
@@ -129,7 +191,7 @@ void *write_behavior(void *args)
     }
     cout_lock("Begin writer thread " << id);
     auto t0_ns = get_cycles();
-    if (use_rcu)
+    if (using_rcu())
         urcu_memb_register_thread();
 
     for (size_t i = 0; i < OUTER_WRITE_LOOP; i++)
@@ -143,7 +205,7 @@ void *write_behavior(void *args)
     auto t1_ns = get_cycles();
     writers[id].cycles = (t1_ns - t0_ns);
 
-    if (use_rcu)
+    if (using_rcu())
         urcu_memb_unregister_thread();
 
     cout_lock("Finish w(" << id << ") @ " << writers[id].cycles / 1e9 << "s");
@@ -160,7 +222,7 @@ void *read_behavior(void *args)
     }
     cout_lock("Begin reader thread " << id);
     auto t0_ns = get_cycles();
-    if (use_rcu)
+    if (using_rcu())
         urcu_memb_register_thread();
 
     for (size_t i = 0; i < OUTER_READ_LOOP; i++)
@@ -173,10 +235,10 @@ void *read_behavior(void *args)
     auto t1_ns = get_cycles();
     readers[id].cycles = (t1_ns - t0_ns);
 
-    if (use_rcu)
+    if (using_rcu())
         urcu_memb_unregister_thread();
 
-    cout_lock("Finish r(" << id << ") @ " << readers[id].cycles / 1e9 << "s");
+    cout_lock("Finish r(" << id << ") @ " << readers[id].cycles / 1e9 << "s w/ " << readers[id].counter);
     return NULL;
 }
 
@@ -184,20 +246,20 @@ int main(int argc, char **argv)
 {
     if (argc < 2)
     {
-        std::cout << "Usage: ./benchmark.out {num_readers} {num_writers} [y/n]" << std::endl;
+        std::cout << "Usage: ./benchmark.out {num_readers} {num_writers} [0(RCU), 1(LOCK), 2(ATOMIC), 3(RACE)]"
+                  << std::endl;
         exit(1);
     }
     num_readers = std::atoi(argv[1]);
     num_writers = std::atoi(argv[2]);
-    use_rcu = (*argv[3] == 'y');
+    sync_method = (SyncMethod)(std::atoi(argv[3]));
     std::cout << "Running with " << num_readers << " readers & " << num_writers << " writers" << std::endl;
-    auto rcu_enabled = use_rcu ? "ON" : "OFF";
-    std::cout << "RCU: " << rcu_enabled << std::endl << std::endl;
 
-    if (use_rcu)
-    {
+    std::cout << "Synchronization method: " << SyncName(sync_method) << std::endl << std::endl;
+
+    if (using_rcu())
         urcu_memb_init(); // rcu_init();
-    }
+
     pthread_rwlock_init(&rwlock, NULL);
     pthread_mutex_init(&mutexlock, NULL);
     pthread_mutex_init(&stdout_lock, NULL);
@@ -260,6 +322,11 @@ int main(int argc, char **argv)
         cycles_t cycles_per_write = tot_write_cycles / static_cast<float>(writers.size() * WRITE_LOOP);
         std::cout << std::fixed << std::setprecision(3) << "Write -- Avg time: " << tot_write_time / readers.size()
                   << "s | Cycles per write: " << cycles_per_write << std::endl;
+    }
+
+    if (sync_method == SyncMethod::ATOMIC)
+    {
+        (*gbl_counter) = gbl_counter_atomic.load(); // ensure the global atomic is used as the final "count"
     }
 
     std::cout << "Final counter: " << (*gbl_counter) << std::endl;
