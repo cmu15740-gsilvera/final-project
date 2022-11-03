@@ -23,8 +23,8 @@ size_t num_readers; // set by user cmd options
 size_t num_writers; // set by user cmd options
 bool use_rcu;       // set by user cmd options
 
-#define OUTER_READ_LOOP 2000U
-#define INNER_READ_LOOP 10000U
+#define OUTER_READ_LOOP 200U
+#define INNER_READ_LOOP 100000U
 #define READ_LOOP ((unsigned long long)OUTER_READ_LOOP * INNER_READ_LOOP)
 
 #define OUTER_WRITE_LOOP 10U
@@ -34,8 +34,9 @@ bool use_rcu;       // set by user cmd options
 #define GLOBAL_AMNT 8
 counter_t *gbl_counter = new counter_t(GLOBAL_AMNT); // this is the global!
 
-pthread_mutex_t lock;        // general purpose pthread mutex
-pthread_mutex_t stdout_lock; // stdout_lock is just for pretty printing
+pthread_rwlock_t rwlock;     // reader-writer lock (supports concurrent readers)
+pthread_mutex_t mutexlock;   // single user (reader or writer) mutex
+pthread_mutex_t stdout_lock; // stdout_lock is just for pretty printing to stdout (cout)
 
 typedef uint64_t cycles_t;
 static inline cycles_t get_cycles()
@@ -66,7 +67,7 @@ inline void update_counter()
         counter_t *new_counter;
         counter_t *old_counter;
         new_counter = new counter_t(0);
-        pthread_mutex_lock(&lock);
+        pthread_mutex_lock(&mutexlock);
 #if defined(_LGPL_SOURCE)
         old_counter = rcu_dereference(gbl_counter);
 #else
@@ -74,15 +75,15 @@ inline void update_counter()
 #endif
         *new_counter = GLOBAL_AMNT; // (*old_counter + 1); // bump
         rcu_assign_pointer(gbl_counter, new_counter);
-        pthread_mutex_unlock(&lock);
+        pthread_mutex_unlock(&mutexlock);
         urcu_memb_synchronize_rcu(); // synchronize_rcu();
         delete old_counter;
     }
     else
     {
-        pthread_mutex_lock(&lock);
+        pthread_rwlock_wrlock(&rwlock); // lock for writing
         (*gbl_counter) = GLOBAL_AMNT;
-        pthread_mutex_unlock(&lock);
+        pthread_rwlock_unlock(&rwlock);
     }
 }
 
@@ -105,9 +106,9 @@ inline void read_counter(counter_t &var)
     }
     else
     {
-        pthread_mutex_lock(&lock);
+        pthread_rwlock_rdlock(&rwlock); // lock for reading
         var = (*gbl_counter);
-        pthread_mutex_unlock(&lock);
+        pthread_rwlock_unlock(&rwlock);
     }
     assert(var == GLOBAL_AMNT);
 }
@@ -196,8 +197,9 @@ int main(int argc, char **argv)
     {
         urcu_memb_init(); // rcu_init();
     }
-    pthread_mutex_init(&lock, NULL);        // always initialize lock
-    pthread_mutex_init(&stdout_lock, NULL); // always initialize lock
+    pthread_rwlock_init(&rwlock, NULL);
+    pthread_mutex_init(&mutexlock, NULL);
+    pthread_mutex_init(&stdout_lock, NULL);
 
     // allocate writer threads elements
     writers.reserve(num_writers);
@@ -260,7 +262,8 @@ int main(int argc, char **argv)
     }
 
     std::cout << "Final counter: " << (*gbl_counter) << std::endl;
-    pthread_mutex_destroy(&lock);
+    pthread_rwlock_destroy(&rwlock);
+    pthread_mutex_init(&mutexlock, NULL);
     pthread_mutex_destroy(&stdout_lock);
     delete gbl_counter;
     return 0;
