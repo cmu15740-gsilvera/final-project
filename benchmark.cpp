@@ -161,7 +161,8 @@ inline void read_counter(counter_t &var)
     default:
         throw std::runtime_error("Not implemented!");
     }
-    assert(old_val <= var); // since gbl_counter is bumping positively always
+    if (sync_method != SyncMethod::RACE) // not guaranteed w/ race conditions
+        assert(old_val <= var);          // since gbl_counter is bumping positively always
 }
 
 void *write_behavior(void *args)
