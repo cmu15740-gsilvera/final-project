@@ -50,6 +50,7 @@ static inline cycles_t get_cycles()
 enum SyncMethod : uint8_t
 {
     RCU = 0, // uses RCU
+    RWLOCK,  // uses pthread_rwlock
     LOCK,    // uses pthread_rwlock
     ATOMIC,  // uses std::atomic
     RACE,    // uses NO synchronization
@@ -111,10 +112,16 @@ inline void update_counter()
         delete old_counter;
         break;
     }
-    case (SyncMethod::LOCK): {
+    case (SyncMethod::RWLOCK): {
         pthread_rwlock_wrlock(&rwlock); // lock for writing
         (*gbl_counter)++;               // bump
         pthread_rwlock_unlock(&rwlock);
+        break;
+    }
+    case (SyncMethod::LOCK): {
+        pthread_mutex_lock(&mutexlock); // lock for writing
+        (*gbl_counter)++;               // bump
+        pthread_mutex_unlock(&mutexlock);
         break;
     }
     case (SyncMethod::ATOMIC): {
@@ -144,10 +151,16 @@ inline void read_counter(counter_t &var)
         _rcu_read_unlock();
         break;
     }
-    case (SyncMethod::LOCK): {
+    case (SyncMethod::RWLOCK): {
         pthread_rwlock_rdlock(&rwlock); // lock for reading
         var = (*gbl_counter);
         pthread_rwlock_unlock(&rwlock);
+        break;
+    }
+    case (SyncMethod::LOCK): {
+        pthread_mutex_lock(&mutexlock); // lock for reading
+        var = (*gbl_counter);
+        pthread_mutex_unlock(&mutexlock);
         break;
     }
     case (SyncMethod::ATOMIC): {
@@ -238,18 +251,34 @@ void *read_behavior(void *args)
     return NULL;
 }
 
+void get_sync_mode(const std::string &arg)
+{
+    if (arg == "RCU")
+        sync_method = SyncMethod::RCU;
+    else if (arg == "RWLOCK")
+        sync_method = SyncMethod::RWLOCK;
+    else if (arg == "LOCK")
+        sync_method = SyncMethod::LOCK;
+    else if (arg == "ATOMIC")
+        sync_method = SyncMethod::ATOMIC;
+    else if (arg == "RACE")
+        sync_method = SyncMethod::RACE;
+    else
+        throw std::runtime_error("unable to interpret \"" + arg + "\"");
+}
+
 int main(int argc, char **argv)
 {
     if (argc < 8)
     {
-        std::cout << "Usage: {num_readers} {num_writers} [0(RCU)|1(LOCK)|2(ATOMIC)|3(RACE)] {RD_OUTER_LOOP} "
-                     "{RD_INNER_LOOP} {WR_OUTER_LOOP} {WR_INNER_LOOP}"
-                  << std::endl;
+        std::cout << "Usage: {num_readers} {num_writers} ";
+        std::cout << "[\"RCU\"|\"RWLOCK\"|\"LOCK\"|\"ATOMIC\"|\"RACE\"] ";
+        std::cout << "{RD_OUTER_LOOP} {RD_INNER_LOOP} {WR_OUTER_LOOP} {WR_INNER_LOOP}" << std::endl;
         exit(1);
     }
     num_readers = std::atoi(argv[1]);
     num_writers = std::atoi(argv[2]);
-    sync_method = (SyncMethod)(std::atoi(argv[3]));
+    get_sync_mode(std::string{argv[3]});
     RD_OUTER_LOOP = std::atoi(argv[4]);
     RD_INNER_LOOP = std::atoi(argv[5]);
     WR_OUTER_LOOP = std::atoi(argv[6]);
