@@ -77,7 +77,7 @@ def plot_for_mode(mode: str, data: np.ndarray) -> None:
         types = ("Read", "Write")
         primary_type = types[RW_IDX]
         secondary_type = types[1 - RW_IDX]  # the other one
-        fig, ax = plt.subplots(1, 1, figsize=(10, 7))
+        fig, ax = plt.subplots(1, 1)
         ax_plots = []  # for the legends
         for th in num_lines:
             if RW_IDX == 0:
@@ -93,9 +93,10 @@ def plot_for_mode(mode: str, data: np.ndarray) -> None:
             )
             ax_plots.append(ax_plot)
         ax.legend(handles=ax_plots)
-        ax.set_ylabel("CPU Cycles (nanoseconds)")
+        ax.set_ylabel("CPU Cycles (ns)")
         ax.set_xlabel(f"Number of {primary_type} threads")
         plt.title(f"Cycles per {primary_type} in {mode} mode")
+        plt.tight_layout()
         sub_dir: str = "cmp_same"
         os.makedirs(os.path.join(results, sub_dir), exist_ok=True)
         filepath: str = os.path.join(results, sub_dir, f"{mode}_{primary_type}.jpg")
@@ -130,9 +131,12 @@ def plot_cmp(
         cmp_data[sync_modes[m], :] = data[sync_modes[m], num_readers, num_writers, :]
 
     def plot_data(op_type: str) -> None:
-        fig, ax = plt.subplots(1, 1, figsize=(10, 7))
+        fig, ax = plt.subplots(1, 1)
         idx = 0 if op_type == "Read" else 1
         raw_ideal = cmp_data[sync_modes["RCU"], idx]
+        ax.set_ylim(
+            None, max([y_scale(cmp_data[sync_modes[m], idx]) for m in modes]) + 1
+        )
         for m in modes:
             raw_ht: float = cmp_data[sync_modes[m], idx]
             height: float = y_scale(raw_ht)
@@ -143,12 +147,15 @@ def plot_cmp(
                 color="r",
             )
             speedup: float = raw_ht / raw_ideal
-            ax.text(x=m, ha="center", y=height / 2, s=f"{speedup:.3f}x", color="black")
-        ax.set_ylabel("(log10) CPU Cycles (nanoseconds)")
+            ax.text(
+                x=m, ha="center", y=height + 0.1, s=f"{speedup:.3f}x", color="black"
+            )
+        ax.set_ylabel("(log10) CPU Cycles (log(ns))")
         ax.set_xlabel(f"Type of concurrency control/synchronization method")
         plt.title(
-            f"{op_type} performance across modes for {num_readers} readers threads & {num_writers} writer threads"
+            f"{op_type} performance across modes for {num_readers} readers & {num_writers} writers"
         )
+        plt.tight_layout()
         sub_dir: str = "cmp_diff"
         os.makedirs(os.path.join(results, sub_dir), exist_ok=True)
         filepath: str = os.path.join(
