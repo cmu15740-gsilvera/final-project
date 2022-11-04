@@ -116,12 +116,63 @@ def plot_for_mode(mode: str, data: np.ndarray) -> None:
     )
 
 
+def plot_cmp_mode(data: np.ndarray, y_scale=lambda x: np.log10(x)) -> None:
+    m, nR, nW, d = data.shape
+    assert m == len(sync_modes)
+    assert d == 2  # only tracking reads (0) and writes (1)
+
+    def plot_data(RW_IDX: int, thread_range: np.ndarray, th: int) -> None:
+        assert RW_IDX == 0 or RW_IDX == 1  # reads or writes (last dim)
+
+        fig, ax = plt.subplots(1, 1)
+        types = ("Read", "Write")
+        op_type = types[RW_IDX]
+        not_op = types[1 - RW_IDX]
+        ax_plots = []  # for the legends
+        for mode in sync_modes.keys():
+            if RW_IDX == 0:
+                cycle_time = data[sync_modes[mode], thread_range, th, RW_IDX]
+            else:
+                cycle_time = data[sync_modes[mode], th, thread_range, RW_IDX]
+            assert cycle_time.shape == thread_range.shape
+
+            (ax_plot,) = ax.plot(
+                thread_range[np.isfinite(cycle_time)],
+                y_scale(cycle_time[np.isfinite(cycle_time)]),  # ignore plotting None's
+                linewidth=3,
+                label=f"{mode}",
+            )
+            ax_plots.append(ax_plot)
+        ax.legend(handles=ax_plots)
+        ax.set_ylabel("(log10) CPU Cycles (log(ns))")
+        ax.set_xlabel(f"Number of {op_type} threads")
+        plt.title(f"Cycles per {op_type} in {mode} mode with {th} {not_op} threads")
+        plt.tight_layout()
+        sub_dir: str = "cmp_modes"
+        os.makedirs(os.path.join(results, sub_dir), exist_ok=True)
+        filepath: str = os.path.join(results, sub_dir, f"cmp_{op_type}_{th}.jpg")
+        print(f"saving figure to {filepath}")
+        fig.savefig(filepath)
+        plt.close()
+
+    plot_data(
+        RW_IDX=0,  # plotting on reader threads primarily
+        thread_range=np.arange(nR),  # all readers
+        th=2,
+    )
+    plot_data(
+        RW_IDX=1,  # plotting on writer threads primarily
+        thread_range=np.arange(nW),  # all writers
+        th=2,
+    )
+
+
 def plot_cmp(
     data: np.ndarray,
     num_readers: int,
     num_writers: int,
     modes: list = None,
-    y_scale=lambda x: x,
+    y_scale=lambda x: np.log10(x),
 ) -> None:
     if modes is None:
         modes = list(sync_modes.keys())  # all of them
@@ -176,10 +227,12 @@ def data_analysis(datafile: str):
     for mode in sync_modes.keys():
         plot_for_mode(mode, data)
 
+    plot_cmp_mode(data)
+
     # plot comparatively across modes
-    plot_cmp(data, num_readers=8, num_writers=2, y_scale=lambda x: np.log10(x))
-    plot_cmp(data, num_readers=9, num_writers=1, y_scale=lambda x: np.log10(x))
-    plot_cmp(data, num_readers=8, num_writers=9, y_scale=lambda x: np.log10(x))
+    plot_cmp(data, num_readers=8, num_writers=2)
+    plot_cmp(data, num_readers=9, num_writers=1)
+    plot_cmp(data, num_readers=8, num_writers=9)
 
 
 if __name__ == "__main__":
