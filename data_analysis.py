@@ -121,23 +121,23 @@ def plot_cmp_mode(data: np.ndarray, y_scale=lambda x: np.log10(x)) -> None:
     assert m == len(sync_modes)
     assert d == 2  # only tracking reads (0) and writes (1)
 
-    def plot_data(RW_IDX: int, thread_range: np.ndarray, th: int) -> None:
-        assert RW_IDX == 0 or RW_IDX == 1  # reads or writes (last dim)
+    def plot_data(y_axis: str, x_axis: str, x_axis_range: np.ndarray, th: int) -> None:
+        assert y_axis == "Read" or y_axis == "Write"  # reads or writes (last dim)
+        assert x_axis == "Read" or x_axis == "Write"  # reads or writes (last dim)
 
         fig, ax = plt.subplots(1, 1)
-        types = ("Read", "Write")
-        op_type = types[RW_IDX]
-        not_op = types[1 - RW_IDX]
+        not_op = "Write" if x_axis == "Read" else "Read"
         ax_plots = []  # for the legends
+        last_dim = 0 if (y_axis == "Read") else 1
         for mode in sync_modes.keys():
-            if RW_IDX == 0:
-                cycle_time = data[sync_modes[mode], thread_range, th, RW_IDX]
+            if x_axis == "Read":
+                cycle_time = data[sync_modes[mode], x_axis_range, th, last_dim]
             else:
-                cycle_time = data[sync_modes[mode], th, thread_range, RW_IDX]
-            assert cycle_time.shape == thread_range.shape
+                cycle_time = data[sync_modes[mode], th, x_axis_range, last_dim]
+            assert cycle_time.shape == x_axis_range.shape
 
             (ax_plot,) = ax.plot(
-                thread_range[np.isfinite(cycle_time)],
+                x_axis_range[np.isfinite(cycle_time)],
                 y_scale(cycle_time[np.isfinite(cycle_time)]),  # ignore plotting None's
                 linewidth=3,
                 label=f"{mode}",
@@ -145,25 +145,42 @@ def plot_cmp_mode(data: np.ndarray, y_scale=lambda x: np.log10(x)) -> None:
             ax_plots.append(ax_plot)
         ax.legend(handles=ax_plots)
         ax.set_ylabel("(log10) CPU Cycles (log(ns))")
-        ax.set_xlabel(f"Number of {op_type} threads")
-        plt.title(f"Cycles per {op_type} in {mode} mode with {th} {not_op} threads")
+        ax.set_xlabel(f"Number of {x_axis} threads")
+        plt.title(f"(log10) Cycles per {y_axis} with {th} {not_op} threads")
         plt.tight_layout()
         sub_dir: str = "cmp_modes"
         os.makedirs(os.path.join(results, sub_dir), exist_ok=True)
-        filepath: str = os.path.join(results, sub_dir, f"cmp_{op_type}_{th}.jpg")
+        filepath: str = os.path.join(
+            results, sub_dir, f"cmp_{y_axis}_{x_axis}_{th}.jpg"
+        )
         print(f"saving figure to {filepath}")
         fig.savefig(filepath)
         plt.close()
 
     plot_data(
-        RW_IDX=0,  # plotting on reader threads primarily
-        thread_range=np.arange(nR),  # all readers
-        th=2,
+        y_axis="Read",  # plotting read performance
+        x_axis="Read",  # all readers
+        x_axis_range=np.arange(nR),
+        th=2,  # number of not-xaxis threads
     )
     plot_data(
-        RW_IDX=1,  # plotting on writer threads primarily
-        thread_range=np.arange(nW),  # all writers
-        th=2,
+        y_axis="Write",  # plotting write performance
+        x_axis="Read",  # all readers
+        x_axis_range=np.arange(nR),
+        th=2,  # number of not-xaxis threads
+    )
+
+    plot_data(
+        y_axis="Write",  # plotting write performance
+        x_axis="Write",  # all writers
+        x_axis_range=np.arange(nW),
+        th=2,  # number of not-xaxis threads
+    )
+    plot_data(
+        y_axis="Read",  # plotting read performance
+        x_axis="Write",  # all writers
+        x_axis_range=np.arange(nW),
+        th=2,  # number of not-xaxis threads
     )
 
 
