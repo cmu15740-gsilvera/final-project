@@ -4,13 +4,22 @@ import sys
 from typing import Tuple
 import matplotlib.pyplot as plt
 
-sync_modes = {"RCU": 0, "LOCK": 1, "ATOMIC": 2, "RACE": 3}
+# all the available modes
+RCU = "RCU"
+RWLOCK = "RWLOCK"
+LOCK = "LOCK"
+ATOMIC = "ATOMIC"
+RACE = "RACE"
+sync_modes = [RCU, RWLOCK, LOCK, ATOMIC, RACE]
+_sync_modes_idx = {key: i for i, key in enumerate(sync_modes)}
+
+# other metadata
 results: str = "results"
 os.makedirs(results, exist_ok=True)
 
 
-def run_benchmark(num_readers: int, num_writers: int, mode: int) -> Tuple[float, float]:
-    RD_OUTER_LOOP = 2000 if mode != sync_modes["LOCK"] else 200
+def run_benchmark(num_readers: int, num_writers: int, mode: str) -> Tuple[float, float]:
+    RD_OUTER_LOOP = 2000 if mode not in [LOCK, RWLOCK] else 20
     RD_INNER_LOOP = 10000
     WR_OUTER_LOOP = 10
     WR_INNER_LOOP = 200
@@ -37,16 +46,16 @@ def data_collection(datafile: str):
     MAX_WRITERS = 10
     total = MAX_READERS * MAX_WRITERS
     data_all = np.zeros(shape=(len(sync_modes), MAX_READERS, MAX_WRITERS, 2))
-    for mode in sync_modes.keys():
+    for mode in sync_modes:
         i = 0
         for num_readers in range(0, MAX_READERS):
             for num_writers in range(0, MAX_WRITERS):
                 value = run_benchmark(
                     num_readers=num_readers,
                     num_writers=num_writers,
-                    mode=sync_modes[mode],
+                    mode=mode,
                 )
-                data_all[sync_modes[mode], num_readers, num_writers, :] = value
+                data_all[_sync_modes_idx[mode], num_readers, num_writers, :] = value
                 i += 1
                 print(
                     f"({mode}) Done {i}/{total} ({100 * i / total}%)",
@@ -81,9 +90,9 @@ def plot_for_mode(mode: str, data: np.ndarray) -> None:
         ax_plots = []  # for the legends
         for th in num_lines:
             if RW_IDX == 0:
-                cycle_time = data[sync_modes[mode], rd_th_range, th, RW_IDX]
+                cycle_time = data[_sync_modes_idx[mode], rd_th_range, th, RW_IDX]
             else:
-                cycle_time = data[sync_modes[mode], th, wr_th_range, RW_IDX]
+                cycle_time = data[_sync_modes_idx[mode], th, wr_th_range, RW_IDX]
             assert cycle_time.shape == x_axis.shape
             (ax_plot,) = ax.plot(
                 x_axis[np.isfinite(cycle_time)],
@@ -129,11 +138,11 @@ def plot_cmp_mode(data: np.ndarray, y_scale=lambda x: np.log10(x)) -> None:
         not_op = "Write" if x_axis == "Read" else "Read"
         ax_plots = []  # for the legends
         last_dim = 0 if (y_axis == "Read") else 1
-        for mode in sync_modes.keys():
+        for mode in sync_modes:
             if x_axis == "Read":
-                cycle_time = data[sync_modes[mode], x_axis_range, th, last_dim]
+                cycle_time = data[_sync_modes_idx[mode], x_axis_range, th, last_dim]
             else:
-                cycle_time = data[sync_modes[mode], th, x_axis_range, last_dim]
+                cycle_time = data[_sync_modes_idx[mode], th, x_axis_range, last_dim]
             assert cycle_time.shape == x_axis_range.shape
 
             (ax_plot,) = ax.plot(
@@ -192,21 +201,23 @@ def plot_cmp(
     y_scale=lambda x: np.log10(x),
 ) -> None:
     if modes is None:
-        modes = list(sync_modes.keys())  # all of them
+        modes = list(sync_modes)  # all of them
 
     cmp_data = np.zeros(shape=(len(modes), 2))
     for m in modes:
-        cmp_data[sync_modes[m], :] = data[sync_modes[m], num_readers, num_writers, :]
+        cmp_data[_sync_modes_idx[m], :] = data[
+            _sync_modes_idx[m], num_readers, num_writers, :
+        ]
 
     def plot_data(op_type: str) -> None:
         fig, ax = plt.subplots(1, 1)
         idx = 0 if op_type == "Read" else 1
-        raw_ideal = cmp_data[sync_modes["RCU"], idx]
+        raw_ideal = cmp_data[_sync_modes_idx[RCU], idx]
         ax.set_ylim(
-            None, max([y_scale(cmp_data[sync_modes[m], idx]) for m in modes]) + 1
+            None, max([y_scale(cmp_data[_sync_modes_idx[m], idx]) for m in modes]) + 1
         )
         for m in modes:
-            raw_ht: float = cmp_data[sync_modes[m], idx]
+            raw_ht: float = cmp_data[_sync_modes_idx[m], idx]
             height: float = y_scale(raw_ht)
             ax.bar(
                 x=m,
@@ -241,7 +252,7 @@ def data_analysis(datafile: str):
     data = np.load(datafile)
 
     # plot individually per mode
-    for mode in sync_modes.keys():
+    for mode in sync_modes:
         plot_for_mode(mode, data)
 
     plot_cmp_mode(data)
@@ -253,6 +264,10 @@ def data_analysis(datafile: str):
 
 
 if __name__ == "__main__":
-    datafile = "data.npy"
-    # data_collection(datafile)
+
+    if not os.path.exists("benchmark.out"):
+        raise Exception('No benchmark executable found! Run "make"')
+
+    datafile = os.path.join(results, "data.npy")
+    data_collection(datafile)
     data_analysis(datafile)

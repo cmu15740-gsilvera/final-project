@@ -10,3 +10,7 @@ all: benchmark
 
 benchmark: benchmark.cpp
 	$(CXX) $(CXXFLAGS) -o benchmark.out benchmark.cpp $(LINKER)
+
+clean:
+	rm -rf *.out
+	rm -rf results/
