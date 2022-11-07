@@ -1,3 +1,7 @@
+#include "bump_counter.h" // what our ops do
+#include "sync_modes.h"   // SyncMode enum
+#include "utils.h"        // utils
+
 #include <atomic>    // std::atomic
 #include <iomanip>   // std::setprecision
 #include <iostream>  // cout
@@ -5,11 +9,6 @@
 #include <time.h>    // timeval
 #include <unistd.h>  // usleep
 #include <vector>    // std::vector
-
-// userspace-RCU include
-#define _LGPL_SOURCE
-// https://github.com/urcu/userspace-rcu#usage-of-liburcu-qsbr
-#include <urcu-qsbr.h> // fastest for reads (slightly more intrusive in code)
 
 size_t num_readers; // set by user cmd options
 size_t num_writers; // set by user cmd options
@@ -20,67 +19,7 @@ size_t RD_INNER_LOOP = 100000U;
 size_t WR_OUTER_LOOP = 10U;
 size_t WR_INNER_LOOP = 200U;
 
-typedef size_t counter_t;
-counter_t *gbl_counter = new counter_t(0); // this is the global!
-
 bool run_benchmark = false; // used as a barrier flag to start all threads at once (on true)
-bool verbose = true;        // disable with 4th optional param
-
-std::atomic<counter_t> gbl_counter_atomic{0};
-pthread_rwlock_t rwlock;     // reader-writer lock (supports concurrent readers)
-pthread_mutex_t mutexlock;   // single user (reader or writer) mutex
-pthread_mutex_t stdout_lock; // stdout_lock is just for pretty printing to stdout (cout)
-
-#define cout_lock(x)                                                                                                   \
-    pthread_mutex_lock(&stdout_lock);                                                                                  \
-    if (verbose)                                                                                                       \
-        std::cout << x << std::endl;                                                                                   \
-    pthread_mutex_unlock(&stdout_lock);
-
-typedef uint64_t cycles_t;
-static inline cycles_t get_cycles()
-{
-    struct timespec ts;
-    if (clock_gettime(CLOCK_MONOTONIC, &ts))
-        return -1ULL;
-    // assuming nanoseconds ~ cycles (approximately true)
-    return ((uint64_t)ts.tv_sec * 1000000000ULL) + ts.tv_nsec;
-}
-
-enum SyncMethod : uint8_t
-{
-    RCU = 0, // uses RCU
-    RWLOCK,  // uses pthread_rwlock
-    LOCK,    // uses pthread_rwlock
-    ATOMIC,  // uses std::atomic
-    RACE,    // uses NO synchronization
-    // ...
-    SIZE, // [META] how many methods do we have?
-};
-enum SyncMethod sync_method; // global concurrency synchronization control parameter
-
-std::string SyncName(SyncMethod m)
-{
-    switch (m)
-    {
-    case SyncMethod::RCU:
-        return "RCU";
-    case SyncMethod::LOCK:
-        return "LOCK";
-    case SyncMethod::ATOMIC:
-        return "ATOMIC";
-    case SyncMethod::RACE:
-        return "NONE";
-    default:
-        return "UNKNOWN";
-    }
-    return "";
-}
-
-inline bool using_rcu()
-{
-    return sync_method == SyncMethod::RCU;
-}
 
 struct ThreadData
 {
@@ -92,91 +31,6 @@ struct ThreadData
 
 std::vector<ThreadData> readers;
 std::vector<ThreadData> writers;
-
-inline void update_counter()
-{
-    switch (sync_method)
-    {
-    case (SyncMethod::RCU): {
-        // similar to
-        // https://www.kernel.org/doc/html/latest/RCU/whatisRCU.html#what-are-some-example-uses-of-core-rcu-api
-        counter_t *new_counter;
-        counter_t *old_counter;
-        new_counter = new counter_t{0};
-        pthread_mutex_lock(&mutexlock);
-        old_counter = gbl_counter;                                 // copy ptr of global
-        *new_counter = (*old_counter + 1);                         // bump global's value to local new
-        old_counter = rcu_xchg_pointer(&gbl_counter, new_counter); // swap with global
-        pthread_mutex_unlock(&mutexlock);
-        synchronize_rcu(); // synchronize_rcu();
-        delete old_counter;
-        break;
-    }
-    case (SyncMethod::RWLOCK): {
-        pthread_rwlock_wrlock(&rwlock); // lock for writing
-        (*gbl_counter)++;               // bump
-        pthread_rwlock_unlock(&rwlock);
-        break;
-    }
-    case (SyncMethod::LOCK): {
-        pthread_mutex_lock(&mutexlock); // lock for writing
-        (*gbl_counter)++;               // bump
-        pthread_mutex_unlock(&mutexlock);
-        break;
-    }
-    case (SyncMethod::ATOMIC): {
-        gbl_counter_atomic++; // bump
-        break;
-    }
-    case (SyncMethod::RACE): {
-        (*gbl_counter)++; // bump
-        break;
-    }
-    default:
-        throw std::runtime_error("Not implemented!");
-    }
-}
-
-inline void read_counter(counter_t &var)
-{
-    counter_t old_val = var;
-    switch (sync_method)
-    {
-    case (SyncMethod::RCU): {
-        _rcu_read_lock();
-        counter_t *local_ptr = nullptr;
-        local_ptr = _rcu_dereference(gbl_counter);
-        if (local_ptr)
-            var = (*local_ptr);
-        _rcu_read_unlock();
-        break;
-    }
-    case (SyncMethod::RWLOCK): {
-        pthread_rwlock_rdlock(&rwlock); // lock for reading
-        var = (*gbl_counter);
-        pthread_rwlock_unlock(&rwlock);
-        break;
-    }
-    case (SyncMethod::LOCK): {
-        pthread_mutex_lock(&mutexlock); // lock for reading
-        var = (*gbl_counter);
-        pthread_mutex_unlock(&mutexlock);
-        break;
-    }
-    case (SyncMethod::ATOMIC): {
-        var = gbl_counter_atomic.load();
-        break;
-    }
-    case (SyncMethod::RACE): {
-        var = (*gbl_counter);
-        break;
-    }
-    default:
-        throw std::runtime_error("Not implemented!");
-    }
-    if (sync_method != SyncMethod::RACE) // not guaranteed w/ race conditions
-        assert(old_val <= var);          // since gbl_counter is bumping positively always
-}
 
 void *write_behavior(void *args)
 {
@@ -249,22 +103,6 @@ void *read_behavior(void *args)
 
     cout_lock("Finish r(" << id << ") @ " << reader.cycles / 1e9 << "s w/ " << reader.counter);
     return NULL;
-}
-
-void get_sync_mode(const std::string &arg)
-{
-    if (arg == "RCU")
-        sync_method = SyncMethod::RCU;
-    else if (arg == "RWLOCK")
-        sync_method = SyncMethod::RWLOCK;
-    else if (arg == "LOCK")
-        sync_method = SyncMethod::LOCK;
-    else if (arg == "ATOMIC")
-        sync_method = SyncMethod::ATOMIC;
-    else if (arg == "RACE")
-        sync_method = SyncMethod::RACE;
-    else
-        throw std::runtime_error("unable to interpret \"" + arg + "\"");
 }
 
 int main(int argc, char **argv)
@@ -369,10 +207,7 @@ int main(int argc, char **argv)
             std::cout << cycles_per_write << std::endl;
     }
 
-    if (sync_method == SyncMethod::ATOMIC)
-    {
-        (*gbl_counter) = gbl_counter_atomic.load(); // ensure the global atomic is used as the final "count"
-    }
+    op_finalize();
 
     if (verbose)
         std::cout << "Final counter: " << (*gbl_counter) << std::endl;
