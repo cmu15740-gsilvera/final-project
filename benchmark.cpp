@@ -16,10 +16,9 @@ size_t num_writers; // set by user cmd options
 size_t RD_OUTER_LOOP = 2000U;
 size_t RD_INNER_LOOP = 100000U;
 
-size_t WR_OUTER_LOOP = 10U;
-size_t WR_INNER_LOOP = 200U;
-
-bool run_benchmark = false; // used as a barrier flag to start all threads at once (on true)
+bool run_benchmark = false;  // used as a barrier flag to start all threads at once (on true)
+bool readers_running = true; // used to keep writers running while readers reading
+int write_freq_us = 10;      // write frequency in microseconds (us) (1000x ns)
 
 struct ThreadData
 {
@@ -49,16 +48,14 @@ void *write_behavior(void *args)
         rcu_register_thread();
 
     auto &writer = writers[id];
-    for (size_t i = 0; i < WR_OUTER_LOOP; i++)
+    while (readers_running)
     {
-        for (size_t j = 0; j < WR_INNER_LOOP; j++)
-        {
-            auto t0_ns = get_cycles();
-            update_counter();
-            auto t1_ns = get_cycles();
-            writer.cycles += (t1_ns - t0_ns); // don't account the usleep usec
-            usleep(1);                        // sleep for this many microseconds
-        }
+        auto t0_ns = get_cycles();
+        update_counter();
+        auto t1_ns = get_cycles();
+        writer.cycles += (t1_ns - t0_ns); // don't account the usleep usec
+        writer.counter++;                 // number of writes this thread has committed
+        usleep(write_freq_us);            // sleep for this many microseconds
     }
 
     if (using_rcu())
@@ -111,7 +108,7 @@ int main(int argc, char **argv)
     {
         std::cout << "Usage: {num_readers} {num_writers} ";
         std::cout << "[\"RCU\"|\"RWLOCK\"|\"LOCK\"|\"ATOMIC\"|\"RACE\"] ";
-        std::cout << "{RD_OUTER_LOOP} {RD_INNER_LOOP} {WR_OUTER_LOOP} {WR_INNER_LOOP}" << std::endl;
+        std::cout << "{RD_OUTER_LOOP} {RD_INNER_LOOP}" << std::endl;
         exit(1);
     }
     num_readers = std::atoi(argv[1]);
@@ -119,8 +116,6 @@ int main(int argc, char **argv)
     get_sync_mode(std::string{argv[3]});
     RD_OUTER_LOOP = std::atoi(argv[4]);
     RD_INNER_LOOP = std::atoi(argv[5]);
-    WR_OUTER_LOOP = std::atoi(argv[6]);
-    WR_INNER_LOOP = std::atoi(argv[7]);
 
     if (argc == 9) // optional param
         verbose = false;
@@ -129,8 +124,7 @@ int main(int argc, char **argv)
     {
         std::cout << "Reader threads running " << RD_OUTER_LOOP << " outer loops of " << RD_INNER_LOOP << " reads"
                   << std::endl;
-        std::cout << "Writer threads running " << WR_OUTER_LOOP << " outer loops of " << WR_INNER_LOOP << " writes"
-                  << std::endl;
+        std::cout << "Writer threads running with frequency of " << write_freq_us << "us writes" << std::endl;
         std::cout << "Running with " << num_readers << " readers & " << num_writers << " writers" << std::endl;
         std::cout << "Synchronization method: " << SyncName(sync_method) << std::endl << std::endl;
     }
@@ -175,13 +169,16 @@ int main(int argc, char **argv)
         pthread_join(reader.thread, NULL);
         tot_read_cycles += reader.cycles;
     }
+    readers_running = false; // stop the writers
 
     // join writers
     cycles_t tot_write_cycles = 0;
+    size_t NUM_WRITES = 0;
     for (auto &writer : writers)
     {
         pthread_join(writer.thread, NULL);
         tot_write_cycles += writer.cycles;
+        NUM_WRITES += writer.counter;
     }
 
     if (num_readers > 0)
@@ -198,8 +195,7 @@ int main(int argc, char **argv)
     if (num_writers > 0)
     {
         float tot_write_time = tot_write_cycles / 1e9;
-        const size_t WRITE_LOOP = WR_INNER_LOOP * WR_OUTER_LOOP;
-        float cycles_per_write = tot_write_cycles / static_cast<float>(writers.size() * WRITE_LOOP);
+        float cycles_per_write = tot_write_cycles / static_cast<float>(writers.size() * NUM_WRITES);
         if (verbose)
             std::cout << std::fixed << std::setprecision(3) << "Write -- Avg time: " << tot_write_time / writers.size()
                       << "s | Cycles per write: " << cycles_per_write << std::endl;
