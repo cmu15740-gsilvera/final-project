@@ -5,6 +5,9 @@
 
 bool verbose = true; // disable with 4th optional param
 
+pthread_rwlock_t rwlock;   // reader-writer lock (supports concurrent readers)
+pthread_mutex_t mutexlock; // single user (reader or writer) mutex
+
 pthread_mutex_t stdout_lock; // stdout_lock is just for pretty printing to stdout (cout)
 
 #define cout_lock(x)                                                                                                   \

@@ -1,6 +1,8 @@
+
 #include "bump_counter.h" // what our ops do
-#include "sync_modes.h"   // SyncMode enum
-#include "utils.h"        // utils
+
+#include "sync_modes.h" // SyncMode enum
+#include "utils.h"      // utils
 
 #include <atomic>    // std::atomic
 #include <iomanip>   // std::setprecision
@@ -23,8 +25,9 @@ int write_freq_us = 10;      // write frequency in microseconds (us) (1000x ns)
 struct ThreadData
 {
     pthread_t thread;
-    counter_t counter = 0;
     size_t id = 0;
+    size_t num_writes = 0;
+    size_t num_reads = 0;
     cycles_t cycles = 0;
 };
 
@@ -51,17 +54,17 @@ void *write_behavior(void *args)
     while (readers_running)
     {
         auto t0_ns = get_cycles();
-        update_counter();
+        write_op();
         auto t1_ns = get_cycles();
         writer.cycles += (t1_ns - t0_ns); // don't account the usleep usec
-        writer.counter++;                 // number of writes this thread has committed
+        writer.num_writes++;              // number of writes this thread has committed
         usleep(write_freq_us);            // sleep for this many microseconds
     }
 
     if (using_rcu())
         rcu_unregister_thread();
 
-    cout_lock("Finish w(" << id << ") @ " << writer.cycles / 1e9 << "s");
+    cout_lock("Finish w(" << id << ") @ " << writer.cycles / 1e9 << "s w/ " << writer.num_writes << " writes");
     return NULL;
 }
 
@@ -88,7 +91,8 @@ void *read_behavior(void *args)
     {
         for (size_t j = 0; j < RD_INNER_LOOP; j++)
         {
-            read_counter(reader.counter); // read global counter
+            read_op(); // read global counter
+            reader.num_reads++;
         }
         _rcu_quiescent_state();
     }
@@ -98,7 +102,7 @@ void *read_behavior(void *args)
     if (using_rcu())
         rcu_unregister_thread();
 
-    cout_lock("Finish r(" << id << ") @ " << reader.cycles / 1e9 << "s w/ " << reader.counter);
+    cout_lock("Finish r(" << id << ") @ " << reader.cycles / 1e9 << "s w/ " << reader.num_reads << " reads");
     return NULL;
 }
 
@@ -178,7 +182,7 @@ int main(int argc, char **argv)
     {
         pthread_join(writer.thread, NULL);
         tot_write_cycles += writer.cycles;
-        NUM_WRITES += writer.counter;
+        NUM_WRITES += writer.num_writes;
     }
 
     if (num_readers > 0)
@@ -203,13 +207,10 @@ int main(int argc, char **argv)
             std::cout << cycles_per_write << std::endl;
     }
 
-    op_finalize();
+    finalize_op();
 
-    if (verbose)
-        std::cout << "Final counter: " << (*gbl_counter) << std::endl;
     pthread_rwlock_destroy(&rwlock);
     pthread_mutex_destroy(&mutexlock);
     pthread_mutex_destroy(&stdout_lock);
-    delete gbl_counter;
     return 0;
 }
