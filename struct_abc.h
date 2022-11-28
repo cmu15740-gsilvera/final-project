@@ -2,23 +2,28 @@
 
 #include "sync_modes.h"
 #include "utils.h"
-#include <ctime>   // std::time
-#include <iomanip> // std::setprecision, std::put_time
+#include <iomanip> // std::setprecision
 #include <iostream>
-#include <sstream> // std::ostringstream
-#include <string>
 
-typedef std::string data_t;
-data_t *gbl_data = new data_t(""); // this is the global!
-
-inline void write_str(data_t &out)
+struct data_t
 {
-    auto t = std::time(nullptr);
-    auto tm = *std::localtime(&t);
-    std::ostringstream oss;
-    oss << std::put_time(&tm, "%d-%m-%Y %H-%M-%S");
-    out = oss.str();
-}
+    data_t() = default;
+    data_t(int _a, int _b, int _c) : a(_a), b(_b), c(_c)
+    {
+    }
+    int a;
+    int b;
+    int c;
+
+    inline void write() noexcept
+    {
+        a += 1;
+        b += 2;
+        c += 3;
+    }
+};
+
+data_t *gbl_data = new data_t(0, 0, 0); // this is the global!
 
 inline void write_op()
 {
@@ -31,30 +36,32 @@ inline void write_op()
         data_t *old_counter;
         new_counter = new data_t{};
         pthread_mutex_lock(&mutexlock);
-        old_counter = gbl_data;                                 // copy ptr of global
-        *new_counter = (*old_counter);                          // copy data from old counter
-        write_str(*new_counter);                                // perform write
+        old_counter = gbl_data;        // copy ptr of global
+        *new_counter = (*old_counter); // copy data from old counter
+        {                              // perform the writes in question
+            new_counter->write();
+        }
         old_counter = rcu_xchg_pointer(&gbl_data, new_counter); // swap with global
         pthread_mutex_unlock(&mutexlock);
         synchronize_rcu(); // synchronize_rcu();
         delete old_counter;
         break;
     }
-    case (SyncMethod::ATOMIC): // no atomic string
+    case (SyncMethod::ATOMIC): // implement "atomic" as using locks
     case (SyncMethod::RWLOCK): {
         pthread_rwlock_wrlock(&rwlock); // lock for writing
-        write_str(*gbl_data);
+        gbl_data->write();
         pthread_rwlock_unlock(&rwlock);
         break;
     }
     case (SyncMethod::LOCK): {
         pthread_mutex_lock(&mutexlock); // lock for writing
-        write_str(*gbl_data);
+        gbl_data->write();
         pthread_mutex_unlock(&mutexlock);
         break;
     }
     case (SyncMethod::RACE): {
-        write_str(*gbl_data);
+        gbl_data->write();
         break;
     }
     default:
@@ -103,8 +110,12 @@ inline void finalize_op()
 {
     // nothing to do
 
-    data_t final_data = *gbl_data;
     if (verbose)
-        std::cout << "Final data: \"" << final_data << "\"" << std::endl;
+    {
+        auto data = *gbl_data;
+        std::cout << std::fixed << std::setprecision(2) << "Final data: {a=" << data.a << ",b=" << data.b << "("
+                  << static_cast<float>(data.b) / data.a << " * a),c=" << data.c << "("
+                  << static_cast<float>(data.c) / data.a << " * a)}" << std::endl;
+    }
     delete gbl_data;
 }

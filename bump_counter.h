@@ -5,9 +5,9 @@
 #include <iostream>
 
 typedef size_t data_t;
-data_t *gbl_counter = new data_t(0); // this is the global!
+data_t *gbl_data = new data_t(0); // this is the global!
 
-std::atomic<data_t> gbl_counter_atomic{0};
+std::atomic<data_t> gbl_data_atomic{0};
 
 inline void write_op()
 {
@@ -20,32 +20,32 @@ inline void write_op()
         data_t *old_counter;
         new_counter = new data_t{0};
         pthread_mutex_lock(&mutexlock);
-        old_counter = gbl_counter;                                 // copy ptr of global
-        *new_counter = (*old_counter + 1);                         // bump global's value to local new
-        old_counter = rcu_xchg_pointer(&gbl_counter, new_counter); // swap with global
+        old_counter = gbl_data;                                 // copy ptr of global
+        *new_counter = (*old_counter + 1);                      // bump global's value to local new
+        old_counter = rcu_xchg_pointer(&gbl_data, new_counter); // swap with global
         pthread_mutex_unlock(&mutexlock);
         synchronize_rcu(); // synchronize_rcu();
         delete old_counter;
         break;
     }
     case (SyncMethod::ATOMIC): {
-        gbl_counter_atomic++; // bump
+        gbl_data_atomic++; // bump
         break;
     }
     case (SyncMethod::RWLOCK): {
         pthread_rwlock_wrlock(&rwlock); // lock for writing
-        (*gbl_counter)++;               // bump
+        (*gbl_data)++;                  // bump
         pthread_rwlock_unlock(&rwlock);
         break;
     }
     case (SyncMethod::LOCK): {
         pthread_mutex_lock(&mutexlock); // lock for writing
-        (*gbl_counter)++;               // bump
+        (*gbl_data)++;                  // bump
         pthread_mutex_unlock(&mutexlock);
         break;
     }
     case (SyncMethod::RACE): {
-        (*gbl_counter)++; // bump
+        (*gbl_data)++; // bump
         break;
     }
     default:
@@ -61,30 +61,30 @@ inline data_t read_op()
     case (SyncMethod::RCU): {
         _rcu_read_lock();
         data_t *local_ptr = nullptr;
-        local_ptr = _rcu_dereference(gbl_counter);
+        local_ptr = _rcu_dereference(gbl_data);
         if (local_ptr)
             val = (*local_ptr);
         _rcu_read_unlock();
         break;
     }
     case (SyncMethod::ATOMIC): {
-        val = gbl_counter_atomic.load();
+        val = gbl_data_atomic.load();
         break;
     }
     case (SyncMethod::RWLOCK): {
         pthread_rwlock_rdlock(&rwlock); // lock for reading
-        val = (*gbl_counter);
+        val = (*gbl_data);
         pthread_rwlock_unlock(&rwlock);
         break;
     }
     case (SyncMethod::LOCK): {
         pthread_mutex_lock(&mutexlock); // lock for reading
-        val = (*gbl_counter);
+        val = (*gbl_data);
         pthread_mutex_unlock(&mutexlock);
         break;
     }
     case (SyncMethod::RACE): {
-        val = (*gbl_counter);
+        val = (*gbl_data);
         break;
     }
     default:
@@ -95,14 +95,14 @@ inline data_t read_op()
 
 inline void finalize_op()
 {
-    data_t final_count = *gbl_counter;
+    data_t final_data = *gbl_data;
     if (sync_method == SyncMethod::ATOMIC)
     {
-        final_count = gbl_counter_atomic.load(); // ensure the global atomic is used as the final "count"
+        final_data = gbl_data_atomic.load(); // ensure the global atomic is used as the final "count"
     }
 
     if (verbose)
-        std::cout << "Final counter: " << final_count << std::endl;
+        std::cout << "Final data: " << final_data << std::endl;
 
-    delete gbl_counter;
+    delete gbl_data;
 }
