@@ -3,6 +3,7 @@ import os
 import glob
 from typing import Tuple
 import matplotlib.pyplot as plt
+import time
 
 # all the available modes
 RCU = "RCU"
@@ -35,10 +36,10 @@ def run_benchmark(
     num_readers: int, num_writers: int, mode: str, op: str
 ) -> Tuple[float, float]:
     slow: list = (
-        [LOCK, RWLOCK] if is_slow(op) else [ATOMIC, LOCK, RWLOCK]
+        [LOCK, RWLOCK] if not is_slow(op) else [ATOMIC, LOCK, RWLOCK]
     )  # atomic is slow
     RD_OUTER_LOOP = 2000 if mode not in slow else 20
-    RD_INNER_LOOP = 10000
+    RD_INNER_LOOP = 10000 if mode not in slow else 1000
 
     binary: str = os.path.join(OUT, f"{op}.{BIN_SUFFIX}")
     benchmark_cmd: str = f"{binary} {num_readers} {num_writers} {mode} {RD_OUTER_LOOP} {RD_INNER_LOOP} quiet"
@@ -65,6 +66,7 @@ def data_collection(datafile: str, op: str):
     data_all = np.zeros(shape=(len(sync_modes), MAX_READERS, MAX_WRITERS, 2))
     for mode in sync_modes:
         i = 0
+        start_t: float = time.time()
         for num_readers in range(0, MAX_READERS):
             for num_writers in range(0, MAX_WRITERS):
                 value = run_benchmark(
@@ -76,17 +78,19 @@ def data_collection(datafile: str, op: str):
                 data_all[_sync_modes_idx[mode], num_readers, num_writers, :] = value
                 i += 1
                 print(
-                    f"({op} {mode}) Done {i}/{total} ({100 * i / total}%)",
+                    f"({op} {mode}) Done {i}/{total} ({100 * i / total}%) @ {time.time() - start_t:.2f}s",
                     end="\r",
                     flush=True,
                 )
-        print(f"({op} {mode}) Done {total}/{total} (100.0%)")
+        print(
+            f"({op} {mode}) Done {total}/{total} (100.0%) @ {time.time() - start_t:.2f}s"
+        )
     np.save(datafile, data_all)
     print("Done!")
 
 
 def plot_for_mode(mode: str, data: np.ndarray) -> None:
-    print(f"Plotting data for mode: {mode}")
+    # print(f"Plotting data for mode: {mode}")
 
     m, nR, nW, d = data.shape
     assert m == len(sync_modes)
@@ -275,6 +279,7 @@ def data_analysis(working_dir: str):
     datafile: str = np_files[0]
     data = np.load(datafile)
 
+    global results
     old_results: str = results
     results = working_dir  # for the next few plots to work here
 
