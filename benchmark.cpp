@@ -9,14 +9,12 @@
 #elif defined(OP_STRUCT_ABC)
 #include "struct_abc.h"
 #else
-#error("No suitable operations available!")
+#error("No operation implementations available!")
 #endif
 
-#include <atomic>    // std::atomic
 #include <iomanip>   // std::setprecision
 #include <iostream>  // cout
 #include <pthread.h> // pthread, mutex
-#include <time.h>    // timeval
 #include <unistd.h>  // usleep
 #include <vector>    // std::vector
 
