@@ -2,11 +2,12 @@
 
 #include "sync_modes.h"
 #include "utils.h"
+#include <iomanip> // std::setprecision
 #include <iostream>
 
 struct data_t
 {
-    data_t = default;
+    data_t() = default;
     data_t(int _a, int _b, int _c) : a(_a), b(_b), c(_c)
     {
     }
@@ -14,7 +15,7 @@ struct data_t
     int b;
     int c;
 
-    inline noexcept void write()
+    inline void write() noexcept
     {
         a += 1;
         b += 2;
@@ -22,7 +23,7 @@ struct data_t
     }
 };
 
-data_t *gbl_data = new data_t(1, 3, 5); // this is the global!
+data_t *gbl_data = new data_t(0, 0, 0); // this is the global!
 
 inline void write_op()
 {
@@ -112,7 +113,9 @@ inline void finalize_op()
     if (verbose)
     {
         auto data = *gbl_data;
-        std::cout << "Final data: {a=" << data.a << ",b=" << data.b << ",c=" << data.c << "}" << std::endl;
+        std::cout << std::fixed << std::setprecision(2) << "Final data: {a=" << data.a << ",b=" << data.b << "("
+                  << static_cast<float>(data.b) / data.a << " * a),c=" << data.c << "("
+                  << static_cast<float>(data.c) / data.a << " * a)}" << std::endl;
     }
     delete gbl_data;
 }

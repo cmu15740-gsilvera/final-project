@@ -1,8 +1,12 @@
-
-#include "bump_counter.h" // what our ops do
-
 #include "sync_modes.h" // SyncMode enum
 #include "utils.h"      // utils
+
+// what our ops do
+#if false
+#include "bump_counter.h"
+#else
+#include "atomic_string.h"
+#endif
 
 #include <atomic>    // std::atomic
 #include <iomanip>   // std::setprecision
