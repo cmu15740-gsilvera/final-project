@@ -1,6 +1,6 @@
 import numpy as np
 import os
-import sys
+import glob
 from typing import Tuple
 import matplotlib.pyplot as plt
 
@@ -15,16 +15,33 @@ _sync_modes_idx = {key: i for i, key in enumerate(sync_modes)}
 
 # other metadata
 results: str = "results"
-os.makedirs(results, exist_ok=True)
+OUT = "out"
+BIN_SUFFIX = "out"  # convention is to end in .out
+
+# op types must match the executables made from the makefile
+ATOMIC_STR = "atomic-str"
+BUMP_COUNTER = "bump-counter"
+STRUCT_ABC = "struct-abc"
+ops = [BUMP_COUNTER, STRUCT_ABC, ATOMIC_STR]
 
 
-def run_benchmark(num_readers: int, num_writers: int, mode: str) -> Tuple[float, float]:
-    RD_OUTER_LOOP = 2000 if mode not in [LOCK, RWLOCK] else 20
+def is_slow(op: str):
+    if op == BUMP_COUNTER:
+        return False  # atomic implemented properly
+    return True  # atomic implemented using just locks
+
+
+def run_benchmark(
+    num_readers: int, num_writers: int, mode: str, op: str
+) -> Tuple[float, float]:
+    slow: list = (
+        [LOCK, RWLOCK] if is_slow(op) else [ATOMIC, LOCK, RWLOCK]
+    )  # atomic is slow
+    RD_OUTER_LOOP = 2000 if mode not in slow else 20
     RD_INNER_LOOP = 10000
-    WR_OUTER_LOOP = 10
-    WR_INNER_LOOP = 200
 
-    benchmark_cmd: str = f"./benchmark.out {num_readers} {num_writers} {mode} {RD_OUTER_LOOP} {RD_INNER_LOOP} {WR_OUTER_LOOP} {WR_INNER_LOOP} quiet"
+    binary: str = os.path.join(OUT, f"{op}.{BIN_SUFFIX}")
+    benchmark_cmd: str = f"{binary} {num_readers} {num_writers} {mode} {RD_OUTER_LOOP} {RD_INNER_LOOP} quiet"
     out = os.popen(benchmark_cmd).read()
     time_read = None
     time_write = None
@@ -41,7 +58,7 @@ def run_benchmark(num_readers: int, num_writers: int, mode: str) -> Tuple[float,
     return time_read, time_write
 
 
-def data_collection(datafile: str):
+def data_collection(datafile: str, op: str):
     MAX_READERS = 10
     MAX_WRITERS = 10
     total = MAX_READERS * MAX_WRITERS
@@ -54,15 +71,16 @@ def data_collection(datafile: str):
                     num_readers=num_readers,
                     num_writers=num_writers,
                     mode=mode,
+                    op=op,
                 )
                 data_all[_sync_modes_idx[mode], num_readers, num_writers, :] = value
                 i += 1
                 print(
-                    f"({mode}) Done {i}/{total} ({100 * i / total}%)",
+                    f"({op} {mode}) Done {i}/{total} ({100 * i / total}%)",
                     end="\r",
                     flush=True,
                 )
-        print(f"({mode}) Done {total}/{total} (100.0%)")
+        print(f"({op} {mode}) Done {total}/{total} (100.0%)")
     np.save(datafile, data_all)
     print("Done!")
 
@@ -248,8 +266,17 @@ def plot_cmp(
     plot_data("Write")
 
 
-def data_analysis(datafile: str):
+def data_analysis(working_dir: str):
+    np_files = glob.glob(os.path.join(working_dir, "*.npy"))
+    if len(np_files) != 1:
+        raise Exception(
+            f'Need exactly one np data (.npy) file for analysis in "{working_dir}"'
+        )
+    datafile: str = np_files[0]
     data = np.load(datafile)
+
+    old_results: str = results
+    results = working_dir  # for the next few plots to work here
 
     # plot individually per mode
     for mode in sync_modes:
@@ -262,12 +289,19 @@ def data_analysis(datafile: str):
     plot_cmp(data, num_readers=9, num_writers=1)
     plot_cmp(data, num_readers=8, num_writers=9)
 
+    results = old_results  # back to cwd
+
 
 if __name__ == "__main__":
+    os.makedirs(results, exist_ok=True)
 
-    if not os.path.exists("benchmark.out"):
-        raise Exception('No benchmark executable found! Run "make"')
+    if not os.path.exists(OUT):
+        raise Exception(f'No "{OUT}" directory for binaries! Run make')
 
-    datafile = os.path.join(results, "data.npy")
-    data_collection(datafile)
-    data_analysis(datafile)
+    for binary in glob.glob(os.path.join(OUT, f"*.{BIN_SUFFIX}")):
+        op = os.path.basename(binary).replace(".out", "")
+        working_dir: str = os.path.join(results, op)
+        os.makedirs(working_dir, exist_ok=True)
+        datafile = os.path.join(working_dir, "data.npy")
+        data_collection(datafile, op)
+        data_analysis(working_dir)
