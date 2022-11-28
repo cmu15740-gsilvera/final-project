@@ -1,7 +1,7 @@
 #pragma once
 
-#include "sync_modes.h"
-#include "utils.h"
+#include "../sync_modes.h"
+#include "../utils.h"
 #include <iomanip> // std::setprecision
 #include <iostream>
 

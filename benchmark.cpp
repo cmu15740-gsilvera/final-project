@@ -3,11 +3,11 @@
 
 // what our ops do
 #if defined(OP_BUMP_COUNTER)
-#include "bump_counter.h"
+#include "operations/bump_counter.h"
 #elif defined(OP_ATOMIC_STR)
-#include "atomic_string.h"
+#include "operations/atomic_string.h"
 #elif defined(OP_STRUCT_ABC)
-#include "struct_abc.h"
+#include "operations/struct_abc.h"
 #else
 #error("No operation implementations available!")
 #endif
