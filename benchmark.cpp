@@ -106,23 +106,37 @@ void *read_behavior(void *args)
     return NULL;
 }
 
+enum CMD_PARAMS : uint8_t
+{
+    _BINARY = 0, // first cmd is the binary name always
+    NUM_READERS,
+    NUM_WRITERS,
+    SYNC_TYPE,
+    LOOP_COUNT_OUTER,
+    LOOP_COUNT_INNER,
+
+    _SIZE // meta "param" for how many cmd params we have
+};
+
 int main(int argc, char **argv)
 {
-    if (argc < 8)
+    if (argc < CMD_PARAMS::_SIZE) // required params
     {
         std::cout << "Usage: {num_readers} {num_writers} ";
         std::cout << "[\"RCU\"|\"RWLOCK\"|\"LOCK\"|\"ATOMIC\"|\"RACE\"] ";
-        std::cout << "{RD_OUTER_LOOP} {RD_INNER_LOOP}" << std::endl;
+        std::cout << "{RD_OUTER_LOOP} {RD_INNER_LOOP} [optional: verbose?]" << std::endl;
         exit(1);
     }
-    num_readers = std::atoi(argv[1]);
-    num_writers = std::atoi(argv[2]);
-    get_sync_mode(std::string{argv[3]});
-    RD_OUTER_LOOP = std::atoi(argv[4]);
-    RD_INNER_LOOP = std::atoi(argv[5]);
+    num_readers = std::atoi(argv[CMD_PARAMS::NUM_READERS]);
+    num_writers = std::atoi(argv[CMD_PARAMS::NUM_WRITERS]);
+    get_sync_mode(std::string{argv[CMD_PARAMS::SYNC_TYPE]});
+    RD_OUTER_LOOP = std::atoi(argv[CMD_PARAMS::LOOP_COUNT_OUTER]);
+    RD_INNER_LOOP = std::atoi(argv[CMD_PARAMS::LOOP_COUNT_INNER]);
 
-    if (argc == 9) // optional param
+    if (argc == CMD_PARAMS::_SIZE + 1)
+    { // optional param
         verbose = false;
+    }
 
     if (verbose)
     {
