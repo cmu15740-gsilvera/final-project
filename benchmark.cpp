@@ -2,10 +2,14 @@
 #include "utils.h"      // utils
 
 // what our ops do
-#if false
+#if defined(OP_BUMP_COUNTER)
 #include "bump_counter.h"
-#else
+#elif defined(OP_ATOMIC_STR)
 #include "atomic_string.h"
+#elif defined(OP_STRUCT_ABC)
+#include "struct_abc.h"
+#else
+#error("No suitable operations available!")
 #endif
 
 #include <atomic>    // std::atomic
