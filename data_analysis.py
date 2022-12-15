@@ -66,8 +66,8 @@ def run_benchmark(
 
 
 def data_collection(datafile: str, op: str):
-    MAX_READERS = 10
-    MAX_WRITERS = 10
+    MAX_READERS = 30
+    MAX_WRITERS = 30
     total = MAX_READERS * MAX_WRITERS
     data_all = np.zeros(shape=(len(sync_modes), MAX_READERS, MAX_WRITERS, 2))
     for mode in sync_modes:
@@ -84,7 +84,7 @@ def data_collection(datafile: str, op: str):
                 data_all[_sync_modes_idx[mode], num_readers, num_writers, :] = value
                 i += 1
                 print(
-                    f"({op} {mode}) Done {i}/{total} ({100 * i / total}%) @ {time.time() - start_t:.2f}s",
+                    f"({op} {mode}) Done {i}/{total} ({100 * i / total:.2f}%) @ {time.time() - start_t:.2f}s",
                     end="\r",
                     flush=True,
                 )
