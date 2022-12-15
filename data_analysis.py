@@ -39,7 +39,7 @@ def run_benchmark(
     slow: list = (
         [LOCK, RWLOCK] if not is_slow(op) else [ATOMIC, LOCK, RWLOCK]
     )  # atomic is slow
-    RD_OUTER_LOOP = 2000 if mode not in slow else 20
+    RD_OUTER_LOOP = 2000 if mode not in slow else 200
     RD_INNER_LOOP = 10000 if mode not in slow else 1000
 
     binary: str = os.path.join(OUT, f"{op}.{BIN_SUFFIX}")
