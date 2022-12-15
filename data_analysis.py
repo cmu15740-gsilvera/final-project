@@ -3,6 +3,8 @@ import os
 import glob
 from typing import Tuple
 import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+from mpl_toolkits.mplot3d import Axes3D
 import time
 
 # all the available modes
@@ -153,6 +155,38 @@ def plot_for_mode(mode: str, data: np.ndarray) -> None:
     )
 
 
+def plot_perf_mountain(
+    mode: str, data: np.ndarray, execution: str = "read", scale=lambda x: x
+) -> None:
+    m, nR, nW, d = data.shape
+    assert m == len(sync_modes)
+    assert d == 2  # only tracking reads (0) and writes (1)
+
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection="3d")
+    x = np.arange(nR)
+    y = np.arange(nW)
+    last_dim = 0 if (execution.lower() == "read") else 1
+    z = scale(data[_sync_modes_idx[mode], :, :, last_dim]) # skips plotting nans
+
+    ax.invert_xaxis();
+    ax.set_title(f"Performance mountain of {mode} {execution}s")
+    ax.set_xlabel("Num Readers")
+    ax.set_ylabel("Num Writers")
+    ax.set_zlabel("cycles (ns)")
+    plt.tight_layout()
+    x1,y1 = np.meshgrid(x, y)
+    ax.plot_trisurf(x1.flatten(), y1.flatten(), z.flatten(), cmap=cm.Blues_r)
+    # plt.show()
+
+    sub_dir: str = "3d_plot"
+    os.makedirs(os.path.join(results, sub_dir), exist_ok=True)
+    filepath: str = os.path.join(results, sub_dir, f"plot_{mode}_{execution}.jpg")
+    print(f"saving figure to {filepath}")
+    fig.savefig(filepath)
+    plt.close()
+
+
 def plot_cmp_mode(data: np.ndarray, y_scale=lambda x: np.log10(x)) -> None:
     m, nR, nW, d = data.shape
     assert m == len(sync_modes)
@@ -293,6 +327,11 @@ def data_analysis(working_dir: str):
     for mode in sync_modes:
         plot_for_mode(mode, data)
 
+    # plot 3d graph
+    for mode in sync_modes:
+        for ex in ["Read", "Write"]:
+            plot_perf_mountain(mode, data, execution=ex)
+
     plot_cmp_mode(data)
 
     # plot comparatively across modes
@@ -314,5 +353,5 @@ if __name__ == "__main__":
         working_dir: str = os.path.join(results, op)
         os.makedirs(working_dir, exist_ok=True)
         datafile = os.path.join(working_dir, "data.npy")
-        data_collection(datafile, op)
+        # data_collection(datafile, op)
         data_analysis(working_dir)
