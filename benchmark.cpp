@@ -8,6 +8,8 @@
 #include "operations/atomic_string.h"
 #elif defined(OP_STRUCT_ABC)
 #include "operations/struct_abc.h"
+#elif defined(OP_ATOMIC_VEC)
+#include "operations/atomic_vector.h"
 #else
 #error("No operation implementations available!")
 #endif

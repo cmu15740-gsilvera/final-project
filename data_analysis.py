@@ -21,14 +21,15 @@ BIN_SUFFIX = "out"  # convention is to end in .out
 
 # op types must match the executables made from the makefile
 ATOMIC_STR = "atomic-str"
+ATOMIC_VEC = "atomic-vec"
 BUMP_COUNTER = "bump-counter"
 STRUCT_ABC = "struct-abc"
-ops = [BUMP_COUNTER, STRUCT_ABC, ATOMIC_STR]
+ops = [BUMP_COUNTER, STRUCT_ABC, ATOMIC_STR, ATOMIC_VEC]
 
 
 def is_slow(op: str):
     if op == BUMP_COUNTER:
-        return False  # atomic implemented properly
+        return False  # atomic implemented in hardware
     return True  # atomic implemented using just locks
 
 
