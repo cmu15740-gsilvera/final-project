@@ -39,8 +39,8 @@ def run_benchmark(
     slow: list = (
         [LOCK, RWLOCK] if not is_slow(op) else [ATOMIC, LOCK, RWLOCK]
     )  # atomic is slow
-    RD_OUTER_LOOP = 2000 if mode not in slow else 200
-    RD_INNER_LOOP = 10000 if mode not in slow else 1000
+    RD_OUTER_LOOP = 200 if mode not in slow else 20
+    RD_INNER_LOOP = 1000 if mode not in slow else 100
 
     binary: str = os.path.join(OUT, f"{op}.{BIN_SUFFIX}")
     benchmark_cmd: str = f"{binary} {num_readers} {num_writers} {mode} {RD_OUTER_LOOP} {RD_INNER_LOOP} quiet"
@@ -54,9 +54,14 @@ def run_benchmark(
     elif num_writers == 0:  # only have data for readers
         time_read = float(out)
     else:  # have data for both read & write
-        time_read, time_write, _ = out.split("\n")  # last is lingering \n
-        time_read = float(time_read)
-        time_write = float(time_write)
+        try:
+            time_read, time_write, _ = out.split("\n")  # last is lingering \n
+            time_read = float(time_read)
+            time_write = float(time_write)
+        except ValueError as v:
+            print(
+                f"Error in mode {mode} on op {op} with {num_readers} readera & {num_writers} writers: {v}"
+            )
     return time_read, time_write
 
 
