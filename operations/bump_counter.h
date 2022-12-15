@@ -3,6 +3,7 @@
 #include "../sync_modes.h"
 #include "../utils.h"
 #include <iostream>
+#include <atomic> // std::atomic
 
 typedef size_t data_t;
 data_t *gbl_data = new data_t(0); // this is the global!

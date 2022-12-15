@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdexcept> // std::runtime_error
 #include <string>
 
 // userspace-RCU include
