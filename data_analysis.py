@@ -41,8 +41,8 @@ def run_benchmark(
     slow: list = (
         [LOCK, RWLOCK] if not is_slow(op) else [ATOMIC, LOCK, RWLOCK]
     )  # atomic is slow
-    RD_OUTER_LOOP = 200 if mode not in slow else 20
-    RD_INNER_LOOP = 1000 if mode not in slow else 100
+    RD_OUTER_LOOP = 1000 if mode not in slow else 100
+    RD_INNER_LOOP = 2000 if mode not in slow else 200
 
     binary: str = os.path.join(OUT, f"{op}.{BIN_SUFFIX}")
     benchmark_cmd: str = f"{binary} {num_readers} {num_writers} {mode} {RD_OUTER_LOOP} {RD_INNER_LOOP} quiet"
@@ -167,15 +167,15 @@ def plot_perf_mountain(
     x = np.arange(nR)
     y = np.arange(nW)
     last_dim = 0 if (execution.lower() == "read") else 1
-    z = scale(data[_sync_modes_idx[mode], :, :, last_dim]) # skips plotting nans
+    z = scale(data[_sync_modes_idx[mode], :, :, last_dim])  # skips plotting nans
 
-    ax.invert_xaxis();
+    ax.invert_xaxis()
     ax.set_title(f"Performance mountain of {mode} {execution}s")
     ax.set_xlabel("Num Readers")
     ax.set_ylabel("Num Writers")
     ax.set_zlabel("cycles (ns)")
     plt.tight_layout()
-    x1,y1 = np.meshgrid(x, y)
+    x1, y1 = np.meshgrid(x, y)
     ax.plot_trisurf(x1.flatten(), y1.flatten(), z.flatten(), cmap=cm.Blues_r)
     # plt.show()
 
@@ -310,6 +310,76 @@ def plot_cmp(
     plot_data("Write")
 
 
+def plot_big_cmp(
+    idx=0, # 0 for read, 1 for write
+    readers=19,
+    writers=29,
+    y_scale=lambda x: np.log10(x),
+) -> None:
+
+    data_all = {}
+
+    for op in ops:
+        np_files = glob.glob(os.path.join("results", op, "*.npy"))
+        if len(np_files) != 1:
+            raise Exception(
+                f'Need exactly one np data (.npy) file for analysis in "{working_dir}"'
+            )
+        datafile: str = np_files[0]
+        data_all[op] = np.load(datafile)
+
+    fig, ax = plt.subplots(1, 1)
+    # ax.set_ylim(None, max([y_scale(data[_sync_modes_idx[m], idx]) for m in sync_modes]) + 1)
+    colors = {
+        sync_modes[0]: "r",
+        sync_modes[1]: "g",
+        sync_modes[2]: "b",
+        sync_modes[3]: "y",
+        sync_modes[4]: "cyan",
+    }
+    x = np.arange(len(ops))
+    width = 0.75
+    order_x = [RCU, RACE, ATOMIC, LOCK, RWLOCK]
+    max_y = -np.inf
+    for i, op in enumerate(ops):
+        for j, m in enumerate(order_x):
+            raw_data: float = data_all[op][_sync_modes_idx[m], readers, writers, idx]
+            height: float = y_scale(raw_data)
+            xpos = x[i] + (j - len(order_x) / 2 + 0.5) * width / len(order_x)
+            ax.bar(
+                x=xpos,
+                height=height,
+                width=width / len(order_x),
+                color=colors[m],
+                label=m if i == 0 else None,  # only first one (for legend)
+            )
+            ax.text(
+                x=xpos,
+                ha="center",
+                y=height + 0.1,
+                s=f"{height:.2f}",
+                # color=colors[m],
+            )
+            if height > max_y:
+                max_y = height
+    ax.legend()
+    ax.set_xticks(x, ops)
+    ax.set_ylabel("log CPU Cycles (log ns)")
+    ax.set_ylim(bottom=0, top=max_y + 0.3)
+    ax.set_xlabel(f"")
+    data_type: str = "Read" if idx == 0 else "Write"
+    title: str = (
+        f"{data_type} latency (log) across operations and sync modes"
+    )
+    subtitle: str = f"Fixing #readers={readers+1} and #writers={writers+1}"
+    plt.title(f"{title}\n{subtitle}")
+    # plt.tight_layout()
+    filepath: str = os.path.join(results, f"full_cmp_{data_type}_r{readers}_w{writers}.png")
+    print(f"saving figure to {filepath}")
+    fig.savefig(filepath)
+    plt.close()
+
+
 def data_analysis(working_dir: str):
     np_files = glob.glob(os.path.join(working_dir, "*.npy"))
     if len(np_files) != 1:
@@ -322,6 +392,8 @@ def data_analysis(working_dir: str):
     global results
     old_results: str = results
     results = working_dir  # for the next few plots to work here
+
+    plot_big_cmp()
 
     # plot individually per mode
     for mode in sync_modes:
