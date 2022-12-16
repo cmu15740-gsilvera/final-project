@@ -10,6 +10,32 @@ data_t *gbl_data = new data_t(0); // this is the global!
 
 std::atomic<data_t> gbl_data_atomic{0};
 
+
+{
+    global_t *new_data;
+    global_t *old_data;
+    new_data = new global_t{};
+    pthread_mutex_lock(&mutexlock);
+    old_data = global;         // read
+    (*new_data) = (*old_data); // copy 
+    modify(new_data);          // updates 
+    old_counter = rcu_xchg_pointer(&global, new_data);
+    pthread_mutex_unlock(&mutexlock);
+    synchronize_rcu(); // synchronize_rcu();
+    delete old_counter;
+}
+
+{
+    global_t local_copy;
+    ...
+    _rcu_read_lock();
+    global_t *local_ptr = nullptr;
+    local_ptr = _rcu_dereference(global);
+    if (local_ptr)
+        local_copy = (*local_ptr);
+    _rcu_read_unlock();
+}
+
 inline void write_op()
 {
     switch (sync_method)
